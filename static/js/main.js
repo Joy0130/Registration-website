@@ -48,7 +48,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 // 這會觸發 Bootstrap 的淡出 (fade out) 動畫效果
                 const bsAlert = bootstrap.Alert.getOrCreateInstance(alert);
                 bsAlert.close();
-            }, 1000); // 2seconds
+            }, 3000); // 3seconds
         });
 
     // 檢查頁面上是否存在這些元素
@@ -202,11 +202,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const filterBtns = document.querySelectorAll('.filter-btn'); //篩選按鈕
         // 取得並渲染課程列表
         async function fetchAndRenderCourses() {
-            const response = await fetch(`/api/courses?status=${currentStatus}&search=${currentSearch}`); // 呼叫 API
-            const courses = await response.json(); // 解析回應
-            const courseList = document.getElementById('course-list'); // 課程列表容器
-            courseList.innerHTML = ''; // 清空
-            // 如果沒有課程，顯示提示訊息
+            const response = await fetch(`/api/courses?status=${currentStatus}&search=${currentSearch}`);
+            const courses = await response.json();
+            const courseList = document.getElementById('course-list');
+            courseList.innerHTML = ''; 
+
             if (courses.length === 0) {
                 courseList.innerHTML = '<p class="text-center text-muted">目前沒有符合條件的課程。</p>';
                 return;
@@ -226,7 +226,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 // 根據登入狀態和課程狀態，決定按鈕的行為
                 let actionButton;
                 if (course.status === '報名中') {
-                    if (IS_USER_AUTHENTICATED) {
+                    if (course.is_full) {
+                        actionButton = '<button class="btn btn-secondary w-100" disabled>已額滿</button>';
+                    } else if (IS_USER_AUTHENTICATED) {
                         if (course.is_registered) {
                             actionButton = '<button class="btn btn-outline-secondary w-100" disabled>已報名</button>';
                         } else {
@@ -240,6 +242,16 @@ document.addEventListener('DOMContentLoaded', function() {
                     // 其他狀態（尚未開放、報名截止）的按鈕保持禁用
                     actionButton = `<button class="btn btn-secondary w-100" disabled>${course.status}</button>`;
                 }
+
+                let classTimeDisplayHTML = '';
+                if (course.allow_user_to_choose_time) {
+                    // 如果是自選時間模式
+                    classTimeDisplayHTML = `<h6 class="card-subtitle mb-2 text-primary fw-bold"><i class="bi bi-calendar-check"></i> 上課時間: 自行選擇</h6>`;
+                } else {
+                    // 如果是固定梯次模式
+                    classTimeDisplayHTML = `<h6 class="card-subtitle mb-2 text-muted">上課時間: ${course.class_time_summary}</h6>`;
+                }
+
                 // 建立課程卡片
                 const card = `
                 <div class="col-md-4 mb-4">

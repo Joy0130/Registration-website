@@ -50,7 +50,7 @@ class Course(db.Model):
     registration_end_time = db.Column(db.DateTime, nullable=False)
     allow_user_to_choose_time = db.Column(db.Boolean, default=False, nullable=False)
     duration_hours = db.Column(db.Float, nullable=True, default=1) # 新增：上課時數欄位
-    # --- ▼▼▼ 修改：將自選時間範圍拆分為日期和時間 ▼▼▼ ---
+    # --- 將自選時間範圍拆分為日期和時間---
     user_choice_start_date = db.Column(db.Date, nullable=True)
     user_choice_end_date = db.Column(db.Date, nullable=True)
     user_choice_start_time_of_day = db.Column(db.Time, nullable=True)
@@ -135,9 +135,9 @@ def check_course_status():
 
         db.session.commit()
 
-#scheduler = BackgroundScheduler(daemon=True)
-#scheduler.add_job(check_course_status, 'interval', minutes=1)
-#scheduler.start()
+scheduler = BackgroundScheduler(daemon=True) # 在背景中檢查課程狀態
+scheduler.add_job(check_course_status, 'interval', minutes=1) # 每分鐘檢查課成狀態
+scheduler.start()
 
 # --- 輔助函式 (檢查管理者權限) ---
 from functools import wraps
@@ -393,16 +393,17 @@ def get_courses():
     courses = query.order_by(Course.id.desc()).all()
     courses_data = []
     
-    # 為了高效查詢，一次性找出目前使用者報名過的所有課程ID
-    registered_course_ids = set()
-    if current_user.is_authenticated:
-        user_registrations = db.session.query(TimeSlot.course_id).join(Registration).filter(Registration.user_id == current_user.id).all()
-        registered_course_ids = {r.course_id for r in user_registrations}
-
     for c in courses:
-        class_time_summary = "尚未設定梯次"
-        # ▼▼▼ 修改這裡的檢查邏輯 ▼▼▼
-        if c.time_slots and len(c.time_slots) > 0:
+        is_registered = False
+        if current_user.is_authenticated:
+            user_reg = Registration.query.join(TimeSlot).filter(
+                Registration.user_id == current_user.id,
+                TimeSlot.course_id == c.id
+            ).first()
+            is_registered = user_reg is not None
+        
+        class_time_summary = "尚未設定"
+        if c.time_slots:
             earliest_start_time = min(slot.slot_start_time for slot in c.time_slots)
             latest_end_time = max(slot.slot_end_time for slot in c.time_slots)
             start_str = earliest_start_time.strftime('%Y-%m-%d %H:%M')
@@ -411,18 +412,37 @@ def get_courses():
             else:
                 end_str = latest_end_time.strftime('%Y-%m-%d %H:%M')
             class_time_summary = f"{start_str} ~ {end_str}"
+
+        # --- ▼▼▼ 新增：判斷課程是否已額滿 ▼▼▼ ---
+        is_full = False
+        # 只有在有固定梯次且非自選時間的模式下，才需要判斷是否額滿
+        if c.has_time_slots and not c.allow_user_to_choose_time:
+            # 查詢是否還存在任何一個有剩餘名額的梯次
+            available_slot_exists = db.session.query(TimeSlot.query.filter(
+                TimeSlot.course_id == c.id,
+                TimeSlot.booked_count < TimeSlot.capacity
+            ).exists()).scalar()
+            is_full = not available_slot_exists
         
         courses_data.append({
-            'id': c.id, 'name': c.name, 'description': c.description, 'speaker_info': c.speaker_info,
-            'status': c.status, 'class_time_summary': class_time_summary,
+            'id': c.id,
+            'name': c.name,
+            'description': c.description,
+            'speaker_info': c.speaker_info,
+            'status': c.status,
+            'class_time_summary': class_time_summary, # <--- 確保這個鍵名存在
             'registration_start_time': c.registration_start_time.strftime('%Y-%m-%d %H:%M'),
             'registration_end_time': c.registration_end_time.strftime('%Y-%m-%d %H:%M'),
-            'is_registered': c.id in registered_course_ids,
-            'files': [{'id': f.id, 'url': url_for('download_file', file_id=f.id), 'name': f.display_filename} for f in c.files]
+            'is_full': is_full, # <--- 新增的欄位
+            'is_registered': is_registered,
+            'files': [
+                {'id': f.id, 'url': url_for('download_file', file_id=f.id), 'name': f.display_filename} 
+                for f in c.files
+            ]
         })
+
     return jsonify(courses_data)
 # ---- END ----
-
 
 # [GET] 取得我報名的課程
 @app.route('/api/my_courses', methods=['GET'])
@@ -937,25 +957,10 @@ if __name__ == '__main__':
             db.session.add(admin_user)
             db.session.commit()
             print("管理者帳號: admin, 密碼: Futsu_Admin")
-    app.run(debug=True) # debug=True 會在程式碼變動時自動重啟
-    with app.app_context():
-        db.create_all() # 建立所有資料表
-        # 檢查是否已有 admin 使用者，若無則建立一個
-        if not User.query.filter_by(username='admin').first():
-            print("建立預設管理者帳號...")
-            admin_user = User(username='admin', is_admin=True)
-            admin_user.set_password('Futsu_Admin') # 預設密碼
-            db.session.add(admin_user)
-            db.session.commit()
-            print("管理者帳號: admin, 密碼: Futsu_Admin")
 
         # 在啟動前手動執行一次狀態檢查
         print("[Startup] 正在執行首次課程狀態檢查...")
         check_course_status()
         print("[Startup] 首次檢查完成。")
-        
-    # 設定排程器，負責後續的定時檢查     
-    scheduler = BackgroundScheduler(daemon=True)
-    scheduler.add_job(check_course_status, 'interval', minutes=1)
-    scheduler.start()            
+
     app.run(debug=True) # debug=True 會在程式碼變動時自動重啟
