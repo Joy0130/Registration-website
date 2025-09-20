@@ -1,0 +1,83 @@
+{% extends "layout.html" %}
+{% block title %}{{ course.name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-lg-8 mx-auto">
+            <h1 class="display-5">{{ course.name }}</h1>
+            <p class="lead">
+                {% if course.status == '報名中' %}
+                    <span class="badge bg-success fs-6">報名中</span>
+                {% elif course.status == '尚未開放' %}
+                    <span class="badge bg-warning text-dark fs-6 ">尚未開放</span>
+                {% else %}
+                    <span class="badge bg-secondary fs-6">報名截止</span>
+                {% endif %}
+            </p>
+
+            <hr>
+
+            <p><strong>主講人：</strong> {{ course.speaker_info }}</p>
+            <p><strong>開放報名：</strong> {{ course.registration_start_time.strftime('%Y-%m-%d %H:%M') }}</p>
+            <p><strong>截止報名：</strong> {{ course.registration_end_time.strftime('%Y-%m-%d %H:%M') }}</p>
+
+            <h3 class="mt-4">課程介紹</h3>
+            <div style="white-space: pre-wrap;">{{ course.description }}</div>
+
+            {% if course.files %}
+                    <h4 class="mt-4">課程教材</h4>
+                    <div class="list-group">
+                    {% for file in course.files %}
+                        <a href="{{ url_for('download_file', file_id=file.id) }}" class="list-group-item list-group-item-action" target="_blank">
+                            {{ file.display_filename }}
+                        </a>
+                    {% endfor %}
+                    </div>
+                {% endif %}
+
+        <hr class="my-4">
+
+        {% if course.has_time_slots %}
+            <h3 class="mt-4">選擇上課時間</h3>
+            {% if available_slots %}
+                <div class="list-group" id="slot-selection">
+                {% for slot in available_slots %}
+                    <label class="list-group-item">
+                        <input class="form-check-input me-1" type="radio" name="time_slot_id" value="{{ slot.id }}">
+                        {{ slot.slot_start_time.strftime('%Y-%m-%d %H:%M') }} ~ {{ slot.slot_end_time.strftime('%H:%M') }} (剩餘名額: {{ slot.capacity - slot.booked_count }})
+                    </label>
+                {% endfor %}
+                </div>
+            <div class="d-grid gap-2 mt-3">
+                {% if current_user.is_authenticated %}
+                    {# --- 如果使用者已登入 --- #}
+                    {% if is_registered %}
+                        <button class="btn btn-outline-secondary btn-lg" disabled>您已報名</button>
+                    {% else %}
+                        <button class="btn btn-primary btn-lg" onclick="handleRegistration()">立即報名</button>
+                    {% endif %}
+                {% else %}
+                    {# --- 如果使用者未登入 --- #}
+                    <button class="btn btn-primary btn-lg" onclick="promptLogin()">立即報名</button>
+                {% endif %}
+            </div>
+            {% else %}
+                <p class="text-danger">目前已無可報名的梯次。</p>
+            {% endif %}
+
+        {% else %}
+            <div class="d-grid gap-2">
+                <p class="text-muted">本課程無需選擇特定時間。</p>
+                </div>
+        {% endif %}
+        <div class="text-center mt-4">
+            <a href="{{ url_for('index') }}">&laquo; 返回所有課程</a>
+        </div>
+
+
+
+        </div>
+    </div>
+</div>
+{% endblock %}

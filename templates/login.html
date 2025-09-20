@@ -1,0 +1,62 @@
+{% extends "layout.html" %}
+
+{% block body_class %}login-page-background{% endblock %}
+{% block navbar_classes %}navbar-light navbar-transparent{% endblock %}
+{% block title %}登入/註冊{% endblock %}
+{% block content %}
+
+
+<div class="row justify-content-center align-items-center" style="min-height: 85vh;">
+    <div class="col-11 col-sm-10 col-md-8 col-lg-6 col-xl-5">
+        
+        <div class="card shadow-lg rounded-4">
+            <div class="card-header bg-transparent border-bottom-0">
+                <ul class="nav nav-tabs card-header-tabs" id="myTab" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="login-tab" data-bs-toggle="tab" data-bs-target="#login-pane" type="button" role="tab" aria-controls="login-pane" aria-selected="true">登入</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="register-tab" data-bs-toggle="tab" data-bs-target="#register-pane" type="button" role="tab" aria-controls="register-pane" aria-selected="false">註冊</button>
+                    </li>
+                </ul>
+            </div>
+            <div class="card-body p-4 p-md-5">
+                <div class="tab-content" id="myTabContent">
+                    
+                    <div class="tab-pane fade show active" id="login-pane" role="tabpanel" aria-labelledby="login-tab">
+                        <!-- <h5 class="card-title text-center mb-4">歡迎回來！</h5> -->
+                        <form method="POST" action="{{ url_for('login') }}">
+                            <div class="form-floating mb-3">
+                                <input type="text" class="form-control" id="login-username" name="username" required placeholder="帳號">
+                                <label for="login-username">帳號</label>
+                            </div>
+                            <div class="form-floating mb-3">
+                                <input type="password" class="form-control" id="login-password" name="password" required placeholder="密碼">
+                                <label for="login-password">密碼</label>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100 btn-lg">登入</button>
+                        </form>
+                    </div>
+
+                    <div class="tab-pane fade" id="register-pane" role="tabpanel" aria-labelledby="register-tab">
+                        <h5 class="card-title text-center mb-4">建立新帳號</h5>
+                        <form method="POST" action="{{ url_for('register') }}">
+                            <div class="form-floating mb-3">
+                                <input type="text" class="form-control" id="register-username" name="username" required placeholder="設定帳號">
+                                <label for="register-username">設定帳號</label>
+                            </div>
+                            <div class="form-floating mb-3">
+                                <input type="password" class="form-control" id="register-password" name="password" required placeholder="設定密碼">
+                                <label for="register-password">設定密碼</label>
+                            </div>
+                            <button type="submit" class="btn btn-success w-100 btn-lg">註冊</button>
+                        </form>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

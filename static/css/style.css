@@ -1,0 +1,138 @@
+/* 讓卡片內文可以佔滿剩餘空間 */
+.card-text.flex-grow-1 {
+    min-height: 80px; /* 給一個最小高度，避免長短不一 */
+}
+
+/* --- 頁籤互動效果 --- */
+.nav-tabs .nav-link {
+    transition: all 0.2s ease-in-out; /* 增加平滑過渡效果 */
+    border-width: 2px;
+    border-bottom-width: 0;
+    color: #6c757d; /* 預設文字顏色變淡 */
+}
+
+/* 滑鼠懸停在非作用中頁籤上的效果 */
+.nav-tabs .nav-link:not(.active):hover {
+    border-color: #dee2e6;
+    color: #000;
+}
+
+/* 作用中頁籤的樣式 */
+.nav-tabs .nav-link.active {
+    font-weight: bold;
+    color: #0d6efd;
+    border-color: #dee2e6 #dee2e6 #fff; /* 讓作用中頁籤與下方內容區塊融為一體 */
+}
+
+/* --- 登入畫面--- */
+
+/* --- 輸入框互動效果 --- */
+.form-control {
+    transition: border-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out; /* 增加平滑過渡效果 */
+}
+
+/* 輸入框取得焦點時的陰影效果 */
+.form-control:focus {
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+
+/* --- 按鈕懸停的立體效果 --- */
+.btn {
+    transition: all 0.2s ease-in-out; /* 增加平滑過渡效果 */
+}
+
+.btn:hover {
+    transform: translateY(-3px); /* 向上移動，產生立體感 */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); /* 增加陰影 */
+}
+
+/* --- 讓整個卡片更有質感 --- */
+.card-header-tabs {
+    margin-bottom: -1px; /* 讓頁籤的底線與卡片內容區塊的頂線重合 */
+}
+
+/* 1. 我們需要一個特定的 class 來標記登入頁面的 body */
+body.login-page-background {
+    /* 2. 設定背景圖片 */
+    /* 從專案的本地路徑讀取圖片 */
+    background-image: url('/static/images/login-bg.jpg');
+
+    /* 3. 確保背景圖片填滿整個畫面 */
+    background-size: cover; /* 縮放圖片以完全覆蓋背景區域 */
+    background-position: center; /* 將圖片置中 */
+    background-repeat: no-repeat; /* 圖片不重複 */
+    background-attachment: fixed; /* 捲動頁面時，背景圖片保持固定 */
+}
+/* ---- 登入頁透明導覽列樣式 ---- */
+
+.navbar-transparent {
+    /* 設定一個半透明的白色背景 */
+    background-color: rgba(255, 255, 255, 0.5) !important;
+
+    /* 核心：設定背景模糊（磨砂玻璃效果） */
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px); /* 針對 Safari 瀏覽器 */
+
+    /* 可以加上一個淡淡的底線增加層次感 */
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* 選取透明導覽列中的「品牌名稱」和「導覽連結」 */
+.navbar-transparent .navbar-brand,
+.navbar-transparent .navbar-nav .nav-link {
+    /* 設定文字顏色為帶有些許透明度的白色，看起來更柔和 */
+    color: rgba(255, 255, 255, 0.9);
+
+    /* 加上一點文字陰影，讓文字在複雜背景上更容易閱讀 */
+    text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* 設定滑鼠懸停 (hover) 和當前頁面 (active) 的連結顏色為純白 */
+.navbar-transparent .navbar-nav .nav-link:hover,
+.navbar-transparent .navbar-nav .nav-link.active {
+    color: #FFFFFF;
+}
+
+/* 為了在手機版上顯示，我們還需要將漢堡選單的圖示變成淺色 */
+.navbar-transparent .navbar-toggler-icon {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 10 30 30'%3e%3cpath stroke='rgba(255, 255, 255, 0.8)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+}
+
+/* --- 登入畫面--- */
+
+/* ---- 卡片效果 ---- */
+
+/* 1. 為卡片本身設定過渡動畫 */
+.card {
+    /* 當 transform 和 box-shadow 屬性改變時，在 0.3 秒內平滑地完成動畫 */
+    transition: transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+}
+
+/* 2. 定義滑鼠懸停在卡片上時的樣式 */
+.card:hover {
+    /* 將卡片沿著 Y 軸向上移動 5 像素，產生“浮起來”的感覺 */
+    transform: translateY(-5px);
+
+    /* 同時，給卡片一個更深、更廣的陰影，強化立體感 */
+    box-shadow: 0 12px 28px rgba(55, 141, 208, 0.2), 0 7px 10px rgba(131, 193, 247, 0.18);
+    background-color:  rgba(98, 158, 205, 0.2); /* 一個帶有透明度的淺灰色 */
+}
+
+/* ---- 優化後台管理表格欄位寬度 ---- */
+
+/* 為包含長日期時間的欄位設定最小寬度 */
+#admin-course-list-table th:nth-child(5), /* 最早上課時間 */
+#admin-course-list-table th:nth-child(5), /* 開放報名時間 */
+#admin-course-list-table th:nth-child(6)  /* 報名截止時間 */
+{
+    min-width: 250px;
+}
+
+/* 為包含多個按鈕的操作欄位設定更寬的最小寬度 */
+#admin-course-list-table th:nth-child(7) /* 操作 */
+{
+    min-width: 210px;
+}
+
