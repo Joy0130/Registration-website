@@ -2,8 +2,40 @@
 // 會被所有頁面載入
 
 // 確保 DOM 完全載入後再執行
+// eslint-disable-next-line max-lines-per-function
 document.addEventListener('DOMContentLoaded', function() {
     
+    // ---- START: 新增的「後台課程表單」模式切換邏輯 ----
+    const adminCourseForm = document.querySelector('form[action*="/api/admin/courses"]');
+    if (adminCourseForm) {
+        const allowUserChoiceCheckbox = document.getElementById('allow_user_to_choose_time');
+        const userChoiceSection = document.getElementById('user-choice-range-section');
+        const fixedSlotsSection = document.getElementById('time-slots-section');
+
+        function toggleCourseTimeMode() {
+            const isUserChoiceMode = allowUserChoiceCheckbox.checked;
+
+            // 切換區塊的顯示/隱藏
+            userChoiceSection.style.display = isUserChoiceMode ? 'block' : 'none';
+            fixedSlotsSection.style.display = isUserChoiceMode ? 'none' : 'block';
+
+            // 啟用/禁用對應區塊內的輸入欄位
+            userChoiceSection.querySelectorAll('input').forEach(input => {
+                input.disabled = !isUserChoiceMode;
+            });
+            fixedSlotsSection.querySelectorAll('input, button').forEach(control => {
+                control.disabled = isUserChoiceMode;
+            });
+        }
+
+        // 1. 頁面載入時，根據 checkbox 的初始狀態執行一次
+        toggleCourseTimeMode();
+
+        // 2. 每次 checkbox 狀態改變時，都執行
+        allowUserChoiceCheckbox.addEventListener('change', toggleCourseTimeMode);
+    }
+    // ---- END ----
+
     // ---- START: 新增的梯次管理程式碼 ----
     const timeSlotsSection = document.getElementById('time-slots-section');
     const addSlotBtn = document.getElementById('add-slot-btn');
@@ -28,12 +60,12 @@ document.addEventListener('DOMContentLoaded', function() {
             newRowContainer.innerHTML = slotTemplate.innerHTML;
             const newRowElement = newRowContainer.firstElementChild;
 
-            // 找到新建立的這一列中的所有 input 欄位
-            const inputs = newRowElement.querySelectorAll('input');
+            // 找到新建立的這一列中的所有 input 和 button 欄位
+            const controls = newRowElement.querySelectorAll('input, button');
 
             // 移除它們的 disabled 屬性，將它們“喚醒”
-            inputs.forEach(input => {
-                input.disabled = false;
+            controls.forEach(control => {
+                control.disabled = false;
             });
 
             // 將處理好的新列加到容器中
@@ -51,6 +83,41 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.target.closest('.time-slot-row').remove();
             }
         });
+    }
+
+    // --- ▼▼▼ 新增：管理者自選時間功能的 UI 控制 ▼▼▼ ---
+    const allowUserChoiceCheckbox = document.getElementById('allow_user_to_choose_time');
+    const userChoiceRangeSection = document.getElementById('user-choice-range-section');
+    // const timeSlotsSection = document.getElementById('time-slots-section'); // 已在前面宣告
+
+    if (allowUserChoiceCheckbox && userChoiceRangeSection && timeSlotsSection) {
+        function toggleCourseTimeOptions() {
+            const isUserChoiceAllowed = allowUserChoiceCheckbox.checked;
+
+            // 控制「使用者自選範圍」區塊的顯示/隱藏與啟用/禁用
+            userChoiceRangeSection.style.display = isUserChoiceAllowed ? 'block' : 'none';
+            const rangeInputs = userChoiceRangeSection.querySelectorAll('input');
+            rangeInputs.forEach(input => {
+                input.disabled = !isUserChoiceAllowed;
+                input.required = isUserChoiceAllowed; // 如果啟用，就設為必填
+            });
+
+            // 控制「固定梯次」區塊的顯示/隱藏與啟用/禁用
+            timeSlotsSection.style.display = isUserChoiceAllowed ? 'none' : 'block';
+            const slotInputs = timeSlotsSection.querySelectorAll('input');
+            slotInputs.forEach(input => {
+                // 注意：這裡的 disabled 狀態與上面相反
+                input.disabled = isUserChoiceAllowed;
+                // 如果啟用固定梯次，則設為必填
+                input.required = !isUserChoiceAllowed;
+            });
+        }
+
+        // 頁面載入時先執行一次，根據資料庫的值設定初始狀態
+        toggleCourseTimeOptions();
+
+        // 每次點擊 checkbox 時都重新判斷
+        allowUserChoiceCheckbox.addEventListener('change', toggleCourseTimeOptions);
     }
 
     // ---- 上傳檔案程式 ----
@@ -400,6 +467,22 @@ if (adminCourseListPage) {
         }
         renderNewFiles(); // 初始渲染
     }
+
+    // --- ▼▼▼ 新增：優化 datetime-local 輸入框體驗 ▼▼▼ ---
+    // 為所有 datetime-local 輸入框加上點擊事件，點擊時自動開啟選擇器
+    // 使用事件委派來處理靜態和動態新增的輸入框
+    document.body.addEventListener('click', function(event) {
+        // 檢查被點擊的元素是否是 datetime-local 輸入框
+        if (event.target && event.target.matches('input[type="datetime-local"]')) {
+            try {
+                // 呼叫瀏覽器的原生選擇器
+                event.target.showPicker();
+            } catch (error) {
+                // 某些舊版瀏覽器可能不支援 showPicker()，這裡可以捕捉錯誤以避免腳本中斷
+                console.warn('Browser does not support showPicker() for this input type.', error);
+            }
+        }
+    });
 });
 
 // --- 全域可呼叫的函式 (因為 onclick 屬性需要它們在全域範疇) ---
@@ -483,28 +566,67 @@ async function deleteCourse(courseId) {
 
 // 在 main.js 全域範疇新增此函式
 function handleRegistration() {
+    // 檢查是否為固定梯次模式
     const selectedSlot = document.querySelector('input[name="time_slot_id"]:checked');
-    if (!selectedSlot) {
-        alert('請先選擇一個上課時間梯次！');
+    // 檢查是否為使用者自選時間模式
+    const userSelectedTimeInput = document.getElementById('user_selected_time');
+    
+    let payload = {};
+    let endpoint = '/api/register';
+
+    if (selectedSlot) {
+        // --- 模式一：固定梯次報名 ---
+        payload = { time_slot_id: selectedSlot.value };
+    } else if (userSelectedTimeInput) {
+        // --- 模式二：使用者自選時間報名 ---
+        const selectedTime = userSelectedTimeInput.value;
+        if (!selectedTime) {
+            alert('請先選擇您的上課時間！');
+            return;
+        }
+
+        // --- Frontend validation for the selected time ---
+        const minTime = userSelectedTimeInput.min;
+        const maxTime = userSelectedTimeInput.max;
+        if ((minTime && selectedTime < minTime) || (maxTime && selectedTime > maxTime)) {
+            alert('您選擇的時間不在允許的範圍內，請重新選擇。');
+            return; // Stop the API request
+        }
+
+        // --- ▼▼▼ 新增：檢查是否選到已被預約的時段 ▼▼▼ ---
+        const bookedSlotsJSON = userSelectedTimeInput.dataset.bookedSlots;
+        if (bookedSlotsJSON) {
+            const bookedSlots = JSON.parse(bookedSlotsJSON);
+            // The selectedTime format is "YYYY-MM-DDTHH:mm", we need to add seconds to match the ISO format from the backend
+            if (bookedSlots.includes(selectedTime + ':00')) {
+                alert('您選擇的時段已被預約，請選擇其他時間。');
+                return;
+            }
+        }
+
+        // Get course_id from the URL
+        const courseId = window.location.pathname.split('/').pop();
+        payload = {
+            course_id: courseId,
+            user_selected_time: selectedTime
+        };
+    } else {
+        alert('無法確定報名類型。');
         return;
     }
 
-    const slotId = selectedSlot.value; // 取得選中的梯次 ID
-
     // 發送報名請求
-    fetch('/api/register', {
+    fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ time_slot_id: slotId })
+        body: JSON.stringify(payload)
     })
     .then(response => response.json())
     .then(result => {
+        alert(result.message);
         if (result.success) {
-            alert(result.message);
             location.reload();
-        } else {
-            alert(`報名失敗: ${result.message}`);
-        }
+        } 
     })
     .catch(error => {
         console.error('Error:', error);

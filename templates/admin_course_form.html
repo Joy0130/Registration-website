@@ -14,6 +14,12 @@
     <div class="mb-3">
         <label for="speaker_info" class="form-label">講者資訊</label>
         <input type="text" class="form-control" id="speaker_info" name="speaker_info" value="{{ course.speaker_info if course else '' }}">
+    </div>
+
+    <div class="mb-3">
+        <label for="duration_hours" class="form-label">上課時數</label>
+        <input type="number" class="form-control" id="duration_hours" name="duration_hours" value="{{ course.duration_hours if course else '1' }}" required min="0.5" step="0.5" {% if course %}readonly{% endif %}>
+        <div class="form-text">當允許使用者自選時間時，此時數將用於計算課程結束時間。</div>
     </div>  
 
     <div class="mb-3">
@@ -28,8 +34,31 @@
                value="{{ course.registration_end_time.strftime('%Y-%m-%dT%H:%M') if course else '' }}" required>
     </div>
 
-    <div class="mb-3" id="time-slots-section">
-        <label class="form-label fw-bold">設定上課時間梯次</label>
+    <!-- 允許使用者自選時間的區塊 -->
+    <div class="mb-3 p-3 border rounded bg-light">
+        <div class="form-check mb-2">
+            <input type="checkbox" class="form-check-input" id="allow_user_to_choose_time" name="allow_user_to_choose_time" value="true" {% if course and course.allow_user_to_choose_time %}checked{% endif %}>
+            <label class="form-check-label" for="allow_user_to_choose_time">允許使用者選擇上課時間</label>
+        </div>
+        <div id="user-choice-range-section" style="display: none;">
+            <label class="form-label small">設定使用者可選擇的時間範圍：</label>
+            <div class="row">
+                <div class="col-md-3"><input type="date" class="form-control form-control-sm" name="user_choice_start_date" title="可選開始日期" value="{{ course.user_choice_start_date.strftime('%Y-%m-%d') if course and course.user_choice_start_date else '' }}"></div>
+                <div class="col-md-3"><input type="date" class="form-control form-control-sm" name="user_choice_end_date" title="可選結束日期" value="{{ course.user_choice_end_date.strftime('%Y-%m-%d') if course and course.user_choice_end_date else '' }}"></div>
+                <div class="col-md-3"><input type="time" class="form-control form-control-sm" name="user_choice_start_time_of_day" title="每日可選開始時間" value="{{ course.user_choice_start_time_of_day.strftime('%H:%M') if course and course.user_choice_start_time_of_day else '' }}"></div>
+                <div class="col-md-3"><input type="time" class="form-control form-control-sm" name="user_choice_end_time_of_day" title="每日可選結束時間" value="{{ course.user_choice_end_time_of_day.strftime('%H:%M') if course and course.user_choice_end_time_of_day else '' }}"></div>
+                <div class="col-12">
+                    <div class="form-text">
+                        <small>依序為：可選開始日期、可選結束日期、每日可選開始時間、每日可選結束時間</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="mb-3" id="time-slots-section" style="display: none;">
+        <label class="form-label">設定上課梯次</label>
+        
         <div id="time-slots-container">
             {% if course and course.time_slots %}
                 {% for slot in course.time_slots %}
@@ -43,16 +72,22 @@
                         <div class="col-md-2">
                             <input type="number" class="form-control" name="slot_capacities" placeholder="人數" value="{{ slot.capacity }}" required min="1">
                         </div>
-                        <div class="col-md-2">
-                            <button type="button" class="btn btn-outline-danger w-100 remove-slot-btn" title="移除此梯次">
+                        <div class="col-md-2 d-flex align-items-center">
+                            <button type="button" class="btn btn-sm btn-outline-danger remove-slot-btn" title="移除此梯次">
                                 <i class="bi bi-trash-fill"></i>
                             </button>
                         </div>
                     </div>
                 {% endfor %}
+            {% elif not course %}
+                <div class="row g-2 mb-2 time-slot-row align-items-center">
+                    <div class="col-md-4"><input type="datetime-local" class="form-control" name="slot_start_times" required></div>
+                    <div class="col-md-4"><input type="datetime-local" class="form-control" name="slot_end_times" required></div>
+                    <div class="col-md-2"><input type="number" class="form-control" name="slot_capacities" placeholder="人數" value="30" required min="1"></div>
+                </div>
             {% endif %}
         </div>
-        <button type="button" id="add-slot-btn" class="btn btn-success mt-2">新增一個梯次</button>
+        <button type="button" id="add-slot-btn" class="btn btn-success mt-2">新增梯次</button>
     </div>
 
     <div id="time-slot-template" style="display: none;">
@@ -66,8 +101,8 @@
             <div class="col-md-2">
                 <input type="number" class="form-control" name="slot_capacities" placeholder="人數" value="30" required min="1" disabled>
             </div>
-            <div class="col-md-2">
-                <button type="button" class="btn btn-outline-danger w-30 remove-slot-btn" title="移除此梯次" disabled>
+            <div class="col-md-2 d-flex align-items-center">
+                <button type="button" class="btn btn-sm btn-outline-danger remove-slot-btn" title="移除此梯次" disabled>
                     <i class="bi bi-trash-fill"></i>
                 </button>
             </div>

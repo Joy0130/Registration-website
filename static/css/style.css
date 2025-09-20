@@ -24,23 +24,29 @@
     border-color: #dee2e6 #dee2e6 #fff; /* 讓作用中頁籤與下方內容區塊融為一體 */
 }
 
-/* --- 登入畫面--- */
-
-/* --- 輸入框互動效果 --- */
-.form-control {
-    transition: border-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out; /* 增加平滑過渡效果 */
+/* 針對所有表單控制項，包含 input, textarea, select */
+.form-control:focus,
+.form-select:focus {
+  /* 移除點擊時的藍色外框和陰影 */
+  box-shadow: none;
+  outline: none;
 }
 
-/* 輸入框取得焦點時的陰影效果 */
-.form-control:focus {
-    border-color: #86b7fe;
-    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+/* 針對 radio 和 checkbox，因為它們的結構不同，需要分開處理 */
+.form-check-input:focus {
+    box-shadow: none;
+    outline: none;
 }
-
 
 /* --- 按鈕懸停的立體效果 --- */
 .btn {
     transition: all 0.2s ease-in-out; /* 增加平滑過渡效果 */
+}
+
+/* 確保按鈕在點擊時也有類似的視覺回饋，但移除預設的藍色外框 */
+.btn:focus {
+    box-shadow: none;
+    outline: none;
 }
 
 .btn:hover {
@@ -69,7 +75,7 @@ body.login-page-background {
 
 .navbar-transparent {
     /* 設定一個半透明的白色背景 */
-    background-color: rgba(255, 255, 255, 0.5) !important;
+    background-color: rgba(255, 255, 255, 0.498) !important;
 
     /* 核心：設定背景模糊（磨砂玻璃效果） */
     backdrop-filter: blur(10px);
@@ -135,4 +141,9 @@ body.login-page-background {
 {
     min-width: 210px;
 }
+/* ---- 唯讀輸入框樣式 ---- */
 
+input[readonly], textarea[readonly] {
+    background-color: #e9ecef; /* Bootstrap 預設的禁用背景色 */
+    cursor: not-allowed;      /* 滑鼠指標變為禁止符號 */
+}
