@@ -28,13 +28,8 @@
                value="{{ course.registration_end_time.strftime('%Y-%m-%dT%H:%M') if course else '' }}" required>
     </div>
 
-    <div class="mb-3 form-check">
-        <input type="checkbox" class="form-check-input" id="has_time_slots" name="has_time_slots" value="true" {% if course and course.has_time_slots %}checked{% endif %}>
-        <label class="form-check-label" for="has_time_slots">啟用上課時間梯次選擇</label>
-    </div>
-
-    <div class="mb-3" id="time-slots-section" style="display: none;">
-        <label class="form-label">設定可選梯次 (開始時間～結束時間, 人數)</label>
+    <div class="mb-3" id="time-slots-section">
+        <label class="form-label fw-bold">設定上課時間梯次</label>
         <div id="time-slots-container">
             {% if course and course.time_slots %}
                 {% for slot in course.time_slots %}

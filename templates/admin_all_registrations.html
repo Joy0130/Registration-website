@@ -55,6 +55,7 @@
                 <th>報名課程</th>
                 <th>上課時間</th>
                 <th>報名時間</th>
+                <th>操作</th>
             </tr>
         </thead>
         <tbody>
@@ -66,11 +67,16 @@
                     <td>{{ reg.time_slot.course.name }}</td>
                     <td>{{ reg.time_slot.slot_start_time.strftime('%Y-%m-%d %H:%M') }} ~ {{ reg.time_slot.slot_end_time.strftime('%H:%M') }}</td>
                     <td>{{ reg.local_registration_time().strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                    <td>
+                        <form action="{{ url_for('admin_cancel_registration', registration_id=reg.id) }}" method="POST" onsubmit="return confirm('確定要取消這位使用者的報名嗎？');" style="display: inline;">
+                            <button type="submit" class="btn btn-danger btn-sm">取消報名</button>
+                        </form>
+                    </td>
                 </tr>
                 {% endfor %}
             {% else %}
                 <tr>
-                    <td colspan="5" class="text-center">找不到符合條件的報名紀錄。</td>
+                    <td colspan="6" class="text-center">找不到符合條件的報名紀錄。</td>
                 </tr>
             {% endif %}
         </tbody>

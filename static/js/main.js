@@ -5,7 +5,6 @@
 document.addEventListener('DOMContentLoaded', function() {
     
     // ---- START: 新增的梯次管理程式碼 ----
-    const hasTimeSlotsCheckbox = document.getElementById('has_time_slots');
     const timeSlotsSection = document.getElementById('time-slots-section');
     const addSlotBtn = document.getElementById('add-slot-btn');
     const slotsContainer = document.getElementById('time-slots-container');
@@ -19,33 +18,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 bsAlert.close();
             }, 1000); // 2seconds
         });
+
     // 檢查頁面上是否存在這些元素
-    if (hasTimeSlotsCheckbox && timeSlotsSection && addSlotBtn && slotsContainer && slotTemplate) {
-        
-        // 根據 checkbox 狀態顯示或隱藏梯次設定區塊
-        function toggleTimeSlotsSection() {
-            const isChecked = hasTimeSlotsCheckbox.checked;
-
-            // 根據 checkbox 狀態顯示或隱藏整個區塊
-            timeSlotsSection.style.display = isChecked ? 'block' : 'none';
-
-            // 找到區塊內所有的輸入控制項 (input, textarea, select)
-            const controls = timeSlotsSection.querySelectorAll('input, textarea, select');
-
-            // 根據 checkbox 狀態來啟用或停用這些控制項
-            controls.forEach(control => {
-                control.disabled = !isChecked;
-            });
-
-}
-
-        // 1. 頁面載入時先執行一次
-        toggleTimeSlotsSection();
-
-        // 2. 每次 checkbox 變動時執行
-        hasTimeSlotsCheckbox.addEventListener('change', toggleTimeSlotsSection);
-
-        // 3. 點擊「新增梯次」按鈕的邏輯
+    if (timeSlotsSection && addSlotBtn && slotsContainer && slotTemplate) {
+        // 點擊「新增梯次」按鈕的邏輯
         addSlotBtn.addEventListener('click', () => {
             // 複製模板的內容
             const newRowContainer = document.createElement('div');
@@ -64,7 +40,7 @@ document.addEventListener('DOMContentLoaded', function() {
             slotsContainer.appendChild(newRowElement);
         });
 
-        // 4. 點擊「移除」按鈕的邏輯 (使用事件委派)
+        // 點擊「移除」按鈕的邏輯 (使用事件委派)
         slotsContainer.addEventListener('click', (e) => {
             // 由於使用者可能會點擊到 <button> 或裡面的 <i> 圖示
             // 我們使用 .closest() 來找到最接近的 .remove-slot-btn 按鈕
@@ -263,6 +239,24 @@ if (myCourseListPage) {
                 });
                 fileLinksHTML += '</div>';
             }
+            
+            // --- 新增：取消報名按鈕的邏輯 ---
+            let cancelButtonHTML = '';
+            const slotStartTime = new Date(reg.slot_start_time);
+            const cancellationDeadline = new Date(slotStartTime.getTime() - (1 * 24 * 60 * 60 * 1000)); // 課程開始前 1 天
+            const now = new Date();
+
+            if (now > cancellationDeadline) {
+                // 已超過取消期限
+                cancelButtonHTML = `
+                    <button class="btn btn-outline-secondary btn-sm mt-3" disabled title="已超過取消期限，請聯繫管理員。">
+                        取消報名
+                    </button>`;
+            } else {
+                // 仍在期限內
+                cancelButtonHTML = `
+                    <button class="btn btn-outline-danger btn-sm mt-3" onclick="cancelMyRegistration(${reg.registration_id}, '${reg.course_name}')">取消報名</button>`;
+            }
 
             const card = `
             <div class="col-md-6 mb-4">
@@ -273,6 +267,7 @@ if (myCourseListPage) {
                         <h6 class="card-subtitle mb-3 text-primary fw-bold">您的上課時間: ${reg.class_time}</h6>
                         <p class="card-text">${reg.course_description}</p>
                         ${fileLinksHTML}
+                        ${cancelButtonHTML}
                     </div>
                 </div>
             </div>`;
@@ -408,6 +403,33 @@ if (adminCourseListPage) {
 });
 
 // --- 全域可呼叫的函式 (因為 onclick 屬性需要它們在全域範疇) ---
+
+/**
+ * 使用者取消自己的報名
+ * @param {number} registrationId - 報名紀錄的 ID
+ * @param {string} courseName - 課程名稱
+ */
+async function cancelMyRegistration(registrationId, courseName) {
+    if (confirm(`您確定要取消報名「${courseName}」嗎？`)) {
+        try {
+            const response = await fetch(`/api/registrations/${registrationId}/cancel`, {
+                method: 'POST',
+            });
+            const result = await response.json();
+            if (response.ok && result.success) {
+                alert(result.message);
+                // 簡單地重新整理頁面來更新列表
+                location.reload();
+            } else {
+                alert(`取消失敗: ${result.message}`);
+            }
+        } catch (error) {
+            console.error('取消報名時發生錯誤:', error);
+            alert('操作失敗，請檢查網路連線或查看主控台。');
+        }
+    }
+}
+
 
 /**
  * 處理課程報名 @param {number} courseId - 課程的 ID

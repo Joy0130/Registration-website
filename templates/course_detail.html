@@ -50,20 +50,25 @@
                 {% endfor %}
                 </div>
             <div class="d-grid gap-2 mt-3">
-                {% if current_user.is_authenticated %}
-                    {# --- 如果使用者已登入 --- #}
-                    {% if is_registered %}
-                        <button class="btn btn-outline-secondary btn-lg" disabled>您已報名</button>
-                    {% else %}
-                        <button class="btn btn-primary btn-lg" onclick="handleRegistration()">立即報名</button>
-                    {% endif %}
+                {# --- ▼▼▼ 修改後的按鈕邏輯 ▼▼▼ --- #}
+                {% if course.status != '報名中' %}
+                    {# 1. 優先判斷：如果課程不是「報名中」，直接顯示禁用按鈕 #}
+                    <button class="btn btn-secondary btn-lg" disabled>{{ course.status }}</button>
                 {% else %}
-                    {# --- 如果使用者未登入 --- #}
-                    <button class="btn btn-primary btn-lg" onclick="promptLogin()">立即報名</button>
+                    {# 2. 如果課程是「報名中」，再判斷使用者狀態 #}
+                    {% if current_user.is_authenticated %}
+                        {% if is_registered %}
+                            <button class="btn btn-outline-secondary btn-lg" disabled>您已報名</button>
+                        {% else %}
+                            <button class="btn btn-primary btn-lg" onclick="handleRegistration()">立即報名</button>
+                        {% endif %}
+                    {% else %}
+                        <button class="btn btn-primary btn-lg" onclick="promptLogin()">立即報名</button>
+                    {% endif %}
                 {% endif %}
             </div>
             {% else %}
-                <p class="text-danger">目前已無可報名的梯次。</p>
+                <p class="text-danger">名額已滿</p>
             {% endif %}
 
         {% else %}

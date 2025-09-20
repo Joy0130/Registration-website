@@ -125,9 +125,9 @@ def check_course_status():
 
         db.session.commit()
 
-scheduler = BackgroundScheduler(daemon=True)
-scheduler.add_job(check_course_status, 'interval', minutes=1)
-scheduler.start()
+#scheduler = BackgroundScheduler(daemon=True)
+#scheduler.add_job(check_course_status, 'interval', minutes=1)
+#scheduler.start()
 
 # --- 輔助函式 (檢查管理者權限) ---
 from functools import wraps
@@ -421,11 +421,13 @@ def get_my_courses():
         class_time = f"{start_str} ~ {end_str}"
 
         my_registrations_data.append({
+            'registration_id': reg.id,
             'course_id': course.id,
             'course_name': course.name,
             'class_time': class_time, # 包含使用者報名的具體上課時間
             'course_description': course.description,
             'speaker_info': course.speaker_info,
+            'slot_start_time': slot.slot_start_time.isoformat(),
             'files': [
                 {'id': f.id, 'url': url_for('download_file', file_id=f.id), 'name': f.display_filename} 
                 for f in course.files
@@ -449,6 +451,16 @@ def register_for_slot():
     if not slot:
         return jsonify({'success': False, 'message': '找不到指定的梯次'}), 404
 
+    # --- ▼▼▼ 新增的驗證邏輯 ▼▼▼ ---
+    course = slot.course
+    # 1. 再次檢查課程狀態，確保仍在「報名中」
+    # 2. 再次檢查報名截止時間，作為雙重保險
+    if course.status != '報名中' or datetime.now() >= course.registration_end_time:
+        # 如果時間已過，順便更新一下資料庫狀態以防萬一
+        course.status = '報名截止'
+        db.session.commit()
+        return jsonify({'success': False, 'message': '此課程報名已截止。'}), 400
+
     # 檢查是否還有名額 (重要！)
     if slot.booked_count >= slot.capacity:
         return jsonify({'success': False, 'message': '此梯次名額已滿'}), 400
@@ -469,6 +481,39 @@ def register_for_slot():
 
     return jsonify({'success': True, 'message': '報名成功！'})
 
+# [POST] 使用者取消報名
+@app.route('/api/registrations/<int:registration_id>/cancel', methods=['POST'])
+@login_required
+def cancel_registration(registration_id):
+    # 1. 找到報名紀錄，並確保是目前登入的使用者所擁有的
+    reg = Registration.query.filter_by(id=registration_id, user_id=current_user.id).first()
+
+    if not reg:
+        return jsonify({'success': False, 'message': '找不到您的報名紀錄或無權限操作。'}), 404
+
+    # 2. 檢查是否在可取消的期限內 (課程開始前 1 天)
+    slot_start_time = reg.time_slot.slot_start_time
+    cancellation_deadline = slot_start_time - timedelta(days=1)
+
+    if datetime.now() > cancellation_deadline:
+        return jsonify({
+            'success': False, 
+            'message': '已超過取消期限（需於課程開始前1天取消），請聯繫管理員。'
+        }), 400
+
+    # 3. 執行取消邏輯
+    try:
+        # 將對應梯次的名額補回去
+        time_slot = reg.time_slot
+        if time_slot.booked_count > 0:
+            time_slot.booked_count -= 1
+        
+        db.session.delete(reg)
+        db.session.commit()
+        return jsonify({'success': True, 'message': '已成功取消報名。'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': f'處理取消時發生錯誤: {e}'}), 500
 # @app.route('/api/courses/<int:course_id>/register', methods=['POST'])
 # @login_required
 # def register_course(course_id):
@@ -494,6 +539,7 @@ def register_for_slot():
 #     db.session.add(new_reg)
 #     db.session.commit()
 #     return jsonify({'success': True, 'message': '報名成功！'})
+
 
 # --- 以下為後台管理 API ---
 
@@ -524,7 +570,7 @@ def create_course():
             status=calculated_status,
             registration_start_time=start_time,
             registration_end_time=end_time,
-            has_time_slots=('has_time_slots' in data)
+            has_time_slots=True # 強制啟用梯次
         )
 
         # 呼叫輔助函式來處理梯次和檔案
@@ -569,7 +615,7 @@ def update_course(course_id):
         course.status = calculated_status
         course.registration_start_time = start_time
         course.registration_end_time = end_time
-        course.has_time_slots = 'has_time_slots' in data
+        course.has_time_slots = True # 強制啟用梯次
 
         # 清除舊梯次並呼叫輔助函式重建
         TimeSlot.query.filter_by(course_id=course.id).delete()
@@ -590,35 +636,34 @@ def update_course(course_id):
 # ---- START: 新增的輔助函式 ----
 def _handle_time_slots(data, course_object):
     """輔助函式：處理課程梯次的建立"""
-    if 'has_time_slots' in data:
-        slot_start_times = data.getlist('slot_start_times')
-        slot_end_times = data.getlist('slot_end_times')
-        slot_capacities = data.getlist('slot_capacities')
+    slot_start_times = data.getlist('slot_start_times')
+    slot_end_times = data.getlist('slot_end_times')
+    slot_capacities = data.getlist('slot_capacities')
 
-        for start_str, end_str, capacity_str in zip(slot_start_times, slot_end_times, slot_capacities):
-            if not start_str or not end_str or not capacity_str:
-                continue
+    for start_str, end_str, capacity_str in zip(slot_start_times, slot_end_times, slot_capacities):
+        if not start_str or not end_str or not capacity_str:
+            continue
+        
+        try:
+            capacity = int(capacity_str)
+            if capacity <= 0:
+                raise ValueError("人數上限必須是正整數")
             
-            try:
-                capacity = int(capacity_str)
-                if capacity <= 0:
-                    raise ValueError("人數上限必須是正整數")
-                
-                start_time = datetime.strptime(start_str, '%Y-%m-%dT%H:%M')
-                end_time = datetime.strptime(end_str, '%Y-%m-%dT%H:%M')
+            start_time = datetime.strptime(start_str, '%Y-%m-%dT%H:%M')
+            end_time = datetime.strptime(end_str, '%Y-%m-%dT%H:%M')
 
-                # 新增驗證：結束時間必須晚於開始時間
-                if end_time <= start_time:
-                    raise ValueError("結束時間必須晚於開始時間")
+            # 新增驗證：結束時間必須晚於開始時間
+            if end_time <= start_time:
+                raise ValueError("結束時間必須晚於開始時間")
 
-                new_slot = TimeSlot(
-                    slot_start_time=start_time,
-                    slot_end_time=end_time,
-                    capacity=capacity
-                )
-                course_object.time_slots.append(new_slot)
-            except (ValueError, TypeError) as e:
-                raise ValueError(f"梯次資料格式錯誤: '{start_str}' -> '{end_str}' ({e})")
+            new_slot = TimeSlot(
+                slot_start_time=start_time,
+                slot_end_time=end_time,
+                capacity=capacity
+            )
+            course_object.time_slots.append(new_slot)
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"梯次資料格式錯誤: '{start_str}' -> '{end_str}' ({e})")
 
 
 def _handle_file_uploads(files, course_object):
@@ -714,6 +759,31 @@ def delete_course_file(file_id):
         print(f"刪除檔案時發生錯誤: {e}")
         return jsonify({'success': False, 'message': '刪除檔案時發生錯誤'}), 500
 
+# [POST] 管理者取消報名
+@app.route('/api/admin/registrations/<int:registration_id>/cancel', methods=['POST'])
+@login_required
+@admin_required
+def admin_cancel_registration(registration_id):
+    reg = db.session.get(Registration, registration_id)
+    if not reg:
+        return jsonify({'success': False, 'message': '找不到指定的報名紀錄。'}), 404
+
+    # 取得當前頁面的查詢參數，以便取消後能回到同一個篩選狀態
+    redirect_url = url_for('all_registrations', **request.args)
+
+    try:
+        time_slot = reg.time_slot
+        if time_slot.booked_count > 0:
+            time_slot.booked_count -= 1
+        
+        db.session.delete(reg)
+        db.session.commit()
+        flash('已成功取消該筆報名。', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'處理取消時發生錯誤: {e}', 'danger')
+    
+    return redirect(redirect_url)
 
 
 # --- 主程式進入點 & 初始化 ---
@@ -739,4 +809,14 @@ if __name__ == '__main__':
             db.session.add(admin_user)
             db.session.commit()
             print("管理者帳號: admin, 密碼: Futsu_Admin")
+
+        # 在啟動前手動執行一次狀態檢查
+        print("[Startup] 正在執行首次課程狀態檢查...")
+        check_course_status()
+        print("[Startup] 首次檢查完成。")
+        
+    # 設定排程器，負責後續的定時檢查     
+    scheduler = BackgroundScheduler(daemon=True)
+    scheduler.add_job(check_course_status, 'interval', minutes=1)
+    scheduler.start()            
     app.run(debug=True) # debug=True 會在程式碼變動時自動重啟
