@@ -85,7 +85,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // --- ▼▼▼ 新增：管理者自選時間功能的 UI 控制 ▼▼▼ ---
+    // --- 管理者自選時間功能的 UI 控制 ---
     const allowUserChoiceCheckbox = document.getElementById('allow_user_to_choose_time');
     const userChoiceRangeSection = document.getElementById('user-choice-range-section');
     // const timeSlotsSection = document.getElementById('time-slots-section'); // 已在前面宣告
@@ -281,8 +281,22 @@ document.addEventListener('DOMContentLoaded', function() {
         // 篩選按鈕事件
         filterBtns.forEach(btn => {
             btn.addEventListener('click', () => {
-                filterBtns.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
+                // 1. 重置所有按鈕為預設的 outline-secondary 樣式
+                filterBtns.forEach(b => {
+                    b.className = 'btn btn-outline-secondary filter-btn';
+                });
+
+                // 2. 根據被點擊按鈕的狀態，設定其對應的實心顏色
+                const clickedStatus = btn.dataset.status;
+                btn.className = 'btn filter-btn'; // 先清除舊樣式
+                switch (clickedStatus) {
+                    case 'all': btn.classList.add('btn-primary'); break; 
+                    case '報名中': btn.classList.add('btn-success'); break;
+                    case '尚未開放': btn.classList.add('btn-warning'); break;
+                    case '報名截止': btn.classList.add('btn-secondary'); break;
+                }
+
+                // 3. 更新狀態並重新取得課程
                 currentStatus = btn.dataset.status;
                 fetchAndRenderCourses();
             });
@@ -299,13 +313,14 @@ document.addEventListener('DOMContentLoaded', function() {
 // --- 我報名的課程頁邏輯 (my_courses.html) ---
 const myCourseListPage = document.getElementById('my-course-list');
 if (myCourseListPage) {
+    let currentMyCourseStatus = 'all'; // 預設顯示所有
+
     async function fetchMyCourses() {
-        const response = await fetch('/api/my_courses');
+        const response = await fetch(`/api/my_courses?status=${currentMyCourseStatus}`);
         const registrations = await response.json(); // API 回傳的是「報名紀錄」列表
         myCourseListPage.innerHTML = '';
-
         if (registrations.length === 0) {
-            myCourseListPage.innerHTML = '<p class="text-center text-muted">您目前沒有報名任何課程。</p>';
+            myCourseListPage.innerHTML = '<p class="text-center text-muted">沒有符合條件的課程。</p>';
             return;
         }
 
@@ -317,6 +332,14 @@ if (myCourseListPage) {
                     fileLinksHTML += `<a href="${file.url}" class="list-group-item list-group-item-action" target="_blank">${file.name}</a>`;
                 });
                 fileLinksHTML += '</div>';
+            }
+
+            // --- 新增：狀態標籤 ---
+            let statusBadgeHTML = '';
+            switch (reg.status) {
+                case '課程即將開始': statusBadgeHTML = '<span class="badge text-white" style="background-color: #ae57a4;">即將開始</span>'; break;
+                case '課程進行中': statusBadgeHTML = '<span class="badge bg-success">進行中</span>'; break;
+                case '課程已結束': statusBadgeHTML = '<span class="badge bg-secondary">已結束</span>'; break;
             }
             
             // --- 新增：取消報名按鈕的邏輯 ---
@@ -341,7 +364,10 @@ if (myCourseListPage) {
             <div class="col-md-6 mb-4">
                 <div class="card h-100">
                     <div class="card-body">
-                        <h5 class="card-title">${reg.course_name}</h5>
+                        <h5 class="card-title">
+                            ${reg.course_name}
+                            ${statusBadgeHTML}
+                        </h5>
                         <h6 class="card-subtitle mb-2 text-muted">講者: ${reg.speaker_info}</h6>
                         <h6 class="card-subtitle mb-3 text-primary fw-bold">您的上課時間: ${reg.class_time}</h6>
                         <p class="card-text">${reg.course_description}</p>
@@ -353,7 +379,41 @@ if (myCourseListPage) {
             myCourseListPage.innerHTML += card;
         });
     }
+
+    // --- 新增：篩選按鈕的事件監聽 ---
+    const filterBtns = document.querySelectorAll('.my-course-filter-btn');
+    filterBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            // 1. 將所有按鈕重設為預設的 outline 樣式，並清除可能存在的行內樣式
+            filterBtns.forEach(b => {
+                b.className = 'btn btn-outline-secondary my-course-filter-btn';
+                b.removeAttribute('style'); // 清除行內樣式，解決顏色殘留問題
+            });
+
+            // 2. 根據被點擊按鈕的狀態，設定其對應的實心顏色
+            const clickedStatus = btn.dataset.status;
+            btn.className = 'btn my-course-filter-btn'; // 先清除舊樣式
+            switch (clickedStatus) {
+                case 'all': btn.classList.add('btn-primary'); break;
+                case '課程即將開始': btn.classList.add('btn-custom-purple'); break; // 改為使用 class
+                case '課程進行中': btn.classList.add('btn-success'); break;
+                case '課程已結束': btn.classList.add('btn-secondary'); break;
+                default: btn.classList.add('btn-primary'); break;
+            }
+
+            // 更新狀態並重新取得課程
+            currentMyCourseStatus = btn.dataset.status;
+            fetchMyCourses();
+        });
+    });
+
+    // 頁面載入時，將 "全部" 按鈕設為 active
+    document.querySelector('.my-course-filter-btn[data-status="all"]').className = 'btn btn-primary my-course-filter-btn';
+
     fetchMyCourses(); // 頁面初始載入
+
+    // --- 新增：每分鐘自動更新課程狀態 ---
+    setInterval(fetchMyCourses, 60000); // 60000 毫秒 = 1 分鐘
 }
 // ---- END ----
 
@@ -378,9 +438,15 @@ if (adminCourseListPage) {
                 <td>${course.registration_start_time}</td>
                 <td>${course.registration_end_time}</td>
                 <td>
-                    <button class="btn btn-sm btn-info" onclick="viewRegistrants(${course.id}, '${course.name}')">查看報名</button>
-                    <a href="/admin/course/edit/${course.id}" class="btn btn-sm btn-warning">修改</a>
-                    <button class="btn btn-sm btn-danger" onclick="deleteCourse(${course.id})">刪除</button>
+                    <button class="btn btn-sm" onclick="viewRegistrants(${course.id}, '${course.name}')" title="查看報名">
+                        <i class="bi bi-eye-fill" style="color: #ae57a4;"></i>
+                    </button>
+                    <a href="/admin/course/edit/${course.id}" class="btn btn-sm" title="修改">
+                        <i class="bi bi-pencil-square text-warning"></i>
+                    </a>
+                    <button class="btn btn-sm" onclick="deleteCourse(${course.id})" title="刪除">
+                        <i class="bi bi-trash-fill text-danger"></i>
+                    </button>
                 </td>
             </tr>`;
             adminCourseListPage.innerHTML += row;
@@ -392,6 +458,8 @@ if (adminCourseListPage) {
 }
 
 // ---- END ----
+
+
     // --- 課程編輯頁邏輯 (admin_course_form.html) ---
     const deleteFileButtons = document.querySelectorAll('.delete-file-btn'); // 取得所有刪除按鈕
     deleteFileButtons.forEach(button => {
@@ -480,7 +548,7 @@ if (adminCourseListPage) {
         renderNewFiles(); // 初始渲染
     }
 
-    // --- ▼▼▼ 新增：優化 datetime-local 輸入框體驗 ▼▼▼ ---
+    // --- 優化 datetime-local 輸入框體驗  ---
     // 為所有 datetime-local 輸入框加上點擊事件，點擊時自動開啟選擇器
     // 使用事件委派來處理靜態和動態新增的輸入框
     document.body.addEventListener('click', function(event) {
@@ -651,6 +719,7 @@ function handleRegistration() {
  * @param {number} courseId - 課程的 ID
  * @param {string} courseName - 課程的名稱
  */
+
 //  檢視報名者列表 函式
 async function viewRegistrants(courseId, courseName) {
     const response = await fetch(`/api/admin/courses/${courseId}/registrations`);
@@ -674,9 +743,7 @@ async function viewRegistrants(courseId, courseName) {
     modal.show();
 }
 
-/**
- * 當未登入使用者點擊需要權限的按鈕時，提示登入並導向。
- */
+/* 當未登入使用者點擊需要權限的按鈕時，提示登入並導向。*/
 function promptLogin() {
     if (confirm('請先登入才能報名。\n您要現在前往登入頁面嗎？')) {
         window.location.href = '/login';

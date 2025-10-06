@@ -1,46 +1,44 @@
-/* 讓卡片內文可以佔滿剩餘空間 */
-.card-text.flex-grow-1 {
-    min-height: 80px; /* 給一個最小高度，避免長短不一 */
+/* --- index.html 篩選按鈕的懸停效果 --- */
+
+/* 預設的 outline 按鈕樣式 */
+.filter-btn.btn-outline-secondary {
+    transition: all 0.2s ease-in-out;
 }
 
-/* --- 頁籤互動效果 --- */
-.nav-tabs .nav-link {
-    transition: all 0.2s ease-in-out; /* 增加平滑過渡效果 */
-    border-width: 2px;
-    border-bottom-width: 0;
-    color: #6c757d; /* 預設文字顏色變淡 */
+/* 懸停在「全部」按鈕上 */
+.filter-btn[data-status="all"]:not(.btn-primary):hover {
+    background-color: #0d6efd; /* Bootstrap primary color */
+    color: white;
+    border-color: #0d6efd;
 }
 
-/* 滑鼠懸停在非作用中頁籤上的效果 */
-.nav-tabs .nav-link:not(.active):hover {
-    border-color: #dee2e6;
+/* 懸停在「報名中」按鈕上 */
+.filter-btn[data-status="報名中"]:not(.btn-success):hover {
+    background-color: #198754; /* Bootstrap success color */
+    color: white;
+    border-color: #198754;
+}
+
+/* 懸停在「尚未開放」按鈕上 */
+.filter-btn[data-status="尚未開放"]:not(.btn-warning):hover {
+    background-color: #ffc107; /* Bootstrap warning color */
     color: #000;
+    border-color: #ffc107;
 }
 
-/* 作用中頁籤的樣式 */
-.nav-tabs .nav-link.active {
-    font-weight: bold;
-    color: #0d6efd;
-    border-color: #dee2e6 #dee2e6 #fff; /* 讓作用中頁籤與下方內容區塊融為一體 */
+/* 懸停在「報名截止」按鈕上 */
+.filter-btn[data-status="報名截止"]:not(.btn-secondary):hover {
+    background-color: #6c757d; /* Bootstrap secondary color */
+    color: white;
+    border-color: #6c757d;
 }
 
-/* 針對所有表單控制項，包含 input, textarea, select */
-.form-control:focus,
-.form-select:focus {
-  /* 移除點擊時的藍色外框和陰影 */
-  box-shadow: none;
-  outline: none;
-}
-
-/* 針對 radio 和 checkbox，因為它們的結構不同，需要分開處理 */
-.form-check-input:focus {
-    box-shadow: none;
-    outline: none;
-}
-
-/* --- 按鈕懸停的立體效果 --- */
-.btn {
-    transition: all 0.2s ease-in-out; /* 增加平滑過渡效果 */
+/* 確保已被選中的按鈕在 hover 時不會改變樣式 */
+.filter-btn.btn-primary:hover,
+.filter-btn.btn-success:hover,
+.filter-btn.btn-warning:hover,
+.filter-btn.btn-secondary:hover {
+    opacity: 1; /* 保持原樣，不變淡 */
 }
 
 /* 確保按鈕在點擊時也有類似的視覺回饋，但移除預設的藍色外框 */
@@ -71,6 +69,20 @@ body.login-page-background {
     background-repeat: no-repeat; /* 圖片不重複 */
     background-attachment: fixed; /* 捲動頁面時，背景圖片保持固定 */
 }
+
+/* ---- 所有課程頁面背景 ---- */
+body.all-courses-background {
+    /* 從專案的本地路徑讀取圖片 */
+    background-image: url('/static/images/allcourses-bg.jpg');
+
+    /* 確保背景圖片填滿整個畫面 */
+    background-size: cover; /* 縮放圖片以完全覆蓋背景區域 */
+    background-position: center; /* 將圖片置中 */
+    background-repeat: no-repeat; /* 圖片不重複 */
+    background-attachment: fixed; /* 捲動頁面時，背景圖片保持固定 */
+}
+
+
 /* ---- 登入頁透明導覽列樣式 ---- */
 
 .navbar-transparent {
@@ -126,6 +138,12 @@ body.login-page-background {
     background-color:  rgba(98, 158, 205, 0.2); /* 一個帶有透明度的淺灰色 */
 }
 
+/* 3. 當滑鼠懸停在登入卡片上時，讓註冊區塊的標題變為白色 */
+.card:hover #register-pane .card-title {
+    color: #fff !important;
+    transition: color 0.3s ease-in-out;
+}
+
 /* ---- 優化後台管理表格欄位寬度 ---- */
 
 /* 為包含長日期時間的欄位設定最小寬度 */
@@ -147,3 +165,42 @@ input[readonly], textarea[readonly] {
     background-color: #e9ecef; /* Bootstrap 預設的禁用背景色 */
     cursor: not-allowed;      /* 滑鼠指標變為禁止符號 */
 }
+
+/* --- 後台管理頁面自訂按鈕 --- */
+.btn-custom-purple-outline {
+  color: #ae57a4;
+  border-color: #ae57a4;
+  background-color: transparent;
+  transition: all 0.2s ease-in-out;
+}
+
+.btn-custom-purple-outline:hover {
+  color: #fff;
+  background-color: #ae57a4;
+  border-color: #ae57a4;
+}
+
+/* --- 「我的課程」頁面自訂按鈕 --- */
+/* .btn-custom-purple 設為實心紫色按鈕 */
+.btn-custom-purple {
+  color: #fff;
+  background-color: #ae57a4;
+  border-color: #ae57a4;
+}
+
+/* --- 「我的課程」頁面篩選按鈕優化 --- */
+.my-course-filter-btn.btn-outline-secondary:active {
+    color: #6c757d; /* 保持與未點擊時相同的文字顏色 */
+    background-color: transparent; /* 保持背景透明 */
+}
+
+/* 修正「即將開始」按鈕 hover 變白的問題 */
+.btn-custom-purple:hover,
+.btn-custom-purple:focus,
+.btn-custom-purple:active {
+  color: #fff !important; /* 保持白色文字 */
+  background-color: #ae57a4 !important; /* 保持原本紫色背景 */
+  border-color: #ae57a4 !important; /* 保持邊框一致 */
+  box-shadow: none !important; /* 移除預設陰影 */
+}
+

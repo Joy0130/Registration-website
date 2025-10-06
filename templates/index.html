@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% block body_class %}all-courses-background{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
     <h1 class="h2">所有課程</h1>
@@ -10,7 +11,7 @@
     </div>
     <div class="col-md-6">
         <div class="btn-group w-100" role="group" aria-label="Filter by status">
-            <button type="button" class="btn btn-outline-secondary filter-btn active" data-status="all">全部</button>
+            <button type="button" class="btn btn-primary filter-btn" data-status="all">全部</button>
             <button type="button" class="btn btn-outline-secondary filter-btn" data-status="報名中">報名中</button>
             <button type="button" class="btn btn-outline-secondary filter-btn" data-status="尚未開放">尚未開放</button>
             <button type="button" class="btn btn-outline-secondary filter-btn" data-status="報名截止">報名截止</button>

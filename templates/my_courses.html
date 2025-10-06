@@ -1,8 +1,20 @@
 {% extends "layout.html" %}
 {% block title %}我報名的課程{% endblock %}
+
 {% block content %}
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-    <h1 class="h2">我報名的課程</h1>
+    <h1 class="h2">我的課程</h1>
+</div>
+<!-- 新增：篩選按鈕 -->
+<div class="row g-3 mb-4 align-items-center">
+    <div class="col-md-8 mx-auto">
+        <div class="btn-group w-100" role="group" aria-label="Filter my courses by status">
+            <button type="button" class="btn btn-primary my-course-filter-btn" data-status="all">全部</button>
+            <button type="button" class="btn btn-outline-secondary my-course-filter-btn" data-status="課程即將開始">即將開始</button>
+            <button type="button" class="btn btn-outline-secondary my-course-filter-btn" data-status="課程進行中">進行中</button>
+            <button type="button" class="btn btn-outline-secondary my-course-filter-btn" data-status="課程已結束">已結束</button>
+        </div>
+    </div>
 </div>
 <div class="row" id="my-course-list">
     </div>

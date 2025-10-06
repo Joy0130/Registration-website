@@ -5,7 +5,7 @@
 <div class="container mt-4">
     <div class="row">
         <div class="col-lg-8 mx-auto">
-            <h1 class="display-5">{{ course.name }}</h1>
+            <h2 class="display-5 fw-bold">{{ course.name }}</h2>
             <p class="lead">
                 {% if course.status == '報名中' %}
                     <span class="badge bg-success fs-6">報名中</span>
@@ -51,7 +51,6 @@
                 {% endfor %}
                 </div>
             <div class="d-grid gap-2 mt-3">
-                {# --- ▼▼▼ 修改後的按鈕邏輯 ▼▼▼ --- #}
                 {% if course.status != '報名中' %}
                     {# 1. 優先判斷：如果課程不是「報名中」，直接顯示禁用按鈕 #}
                     <button class="btn btn-secondary btn-lg" disabled>{{ course.status }}</button>

@@ -5,48 +5,48 @@
 <form action="{% if course %}{{ url_for('update_course', course_id=course.id) }}{% else %}{{ url_for('create_course') }}{% endif %}" method="POST" enctype="multipart/form-data">
     <div class="mb-3">
         <label for="name" class="form-label">課程名稱</label>
-        <input type="text" class="form-control" id="name" name="name" value="{{ course.name if course else '' }}" required>
+        <input type="text" class="form-control" id="name" name="name" value="{{ course.name if course else request.form.get('name', '') }}" required>
     </div>
     <div class="mb-3">
         <label for="description" class="form-label">課程詳細內容</label>
-        <textarea class="form-control" id="description" name="description" rows="5" required>{{ course.description if course else '' }}</textarea>
+        <textarea class="form-control" id="description" name="description" rows="5" required>{{ course.description if course else request.form.get('description', '') }}</textarea>
     </div>
     <div class="mb-3">
         <label for="speaker_info" class="form-label">講者資訊</label>
-        <input type="text" class="form-control" id="speaker_info" name="speaker_info" value="{{ course.speaker_info if course else '' }}">
+        <input type="text" class="form-control" id="speaker_info" name="speaker_info" value="{{ course.speaker_info if course else request.form.get('speaker_info', '') }}">
     </div>
 
     <div class="mb-3">
         <label for="duration_hours" class="form-label">上課時數</label>
-        <input type="number" class="form-control" id="duration_hours" name="duration_hours" value="{{ course.duration_hours if course else '1' }}" required min="0.5" step="0.5" {% if course %}readonly{% endif %}>
+        <input type="number" class="form-control" id="duration_hours" name="duration_hours" value="{{ course.duration_hours if course else request.form.get('duration_hours', '1') }}" required min="0.5" step="0.5" {% if course %}readonly{% endif %}>
         <div class="form-text">當允許使用者自選時間時，此時數將用於計算課程結束時間。</div>
     </div>  
 
     <div class="mb-3">
         <label for="registration_start_time" class="form-label">開放報名時間</label>
-        <input type="datetime-local" class="form-control" id="registration_start_time" name="registration_start_time" 
-               value="{{ course.registration_start_time.strftime('%Y-%m-%dT%H:%M') if course else '' }}" required>
+        <input type="datetime-local" class="form-control" id="registration_start_time" name="registration_start_time"
+               value="{{ course.registration_start_time.strftime('%Y-%m-%dT%H:%M') if course else request.form.get('registration_start_time', '') }}" required>
     </div>
 
     <div class="mb-3">
         <label for="registration_end_time" class="form-label">截止報名時間</label>
-        <input type="datetime-local" class="form-control" id="registration_end_time" name="registration_end_time" 
-               value="{{ course.registration_end_time.strftime('%Y-%m-%dT%H:%M') if course else '' }}" required>
+        <input type="datetime-local" class="form-control" id="registration_end_time" name="registration_end_time"
+               value="{{ course.registration_end_time.strftime('%Y-%m-%dT%H:%M') if course else request.form.get('registration_end_time', '') }}" required>
     </div>
 
     <!-- 允許使用者自選時間的區塊 -->
     <div class="mb-3 p-3 border rounded bg-light">
         <div class="form-check mb-2">
-            <input type="checkbox" class="form-check-input" id="allow_user_to_choose_time" name="allow_user_to_choose_time" value="true" {% if course and course.allow_user_to_choose_time %}checked{% endif %}>
+            <input type="checkbox" class="form-check-input" id="allow_user_to_choose_time" name="allow_user_to_choose_time" value="true" {% if (course and course.allow_user_to_choose_time) or request.form.get('allow_user_to_choose_time') %}checked{% endif %}>
             <label class="form-check-label" for="allow_user_to_choose_time">允許使用者選擇上課時間</label>
         </div>
         <div id="user-choice-range-section" style="display: none;">
             <label class="form-label small">設定使用者可選擇的時間範圍：</label>
             <div class="row">
-                <div class="col-md-3"><input type="date" class="form-control form-control-sm" name="user_choice_start_date" title="可選開始日期" value="{{ course.user_choice_start_date.strftime('%Y-%m-%d') if course and course.user_choice_start_date else '' }}"></div>
-                <div class="col-md-3"><input type="date" class="form-control form-control-sm" name="user_choice_end_date" title="可選結束日期" value="{{ course.user_choice_end_date.strftime('%Y-%m-%d') if course and course.user_choice_end_date else '' }}"></div>
-                <div class="col-md-3"><input type="time" class="form-control form-control-sm" name="user_choice_start_time_of_day" title="每日可選開始時間" value="{{ course.user_choice_start_time_of_day.strftime('%H:%M') if course and course.user_choice_start_time_of_day else '' }}"></div>
-                <div class="col-md-3"><input type="time" class="form-control form-control-sm" name="user_choice_end_time_of_day" title="每日可選結束時間" value="{{ course.user_choice_end_time_of_day.strftime('%H:%M') if course and course.user_choice_end_time_of_day else '' }}"></div>
+                <div class="col-md-3"><input type="date" class="form-control form-control-sm" name="user_choice_start_date" title="可選開始日期" value="{{ (course.user_choice_start_date.strftime('%Y-%m-%d') if course and course.user_choice_start_date) or request.form.get('user_choice_start_date', '') }}"></div>
+                <div class="col-md-3"><input type="date" class="form-control form-control-sm" name="user_choice_end_date" title="可選結束日期" value="{{ (course.user_choice_end_date.strftime('%Y-%m-%d') if course and course.user_choice_end_date) or request.form.get('user_choice_end_date', '') }}"></div>
+                <div class="col-md-3"><input type="time" class="form-control form-control-sm" name="user_choice_start_time_of_day" title="每日可選開始時間" value="{{ (course.user_choice_start_time_of_day.strftime('%H:%M') if course and course.user_choice_start_time_of_day) or request.form.get('user_choice_start_time_of_day', '') }}"></div>
+                <div class="col-md-3"><input type="time" class="form-control form-control-sm" name="user_choice_end_time_of_day" title="每日可選結束時間" value="{{ (course.user_choice_end_time_of_day.strftime('%H:%M') if course and course.user_choice_end_time_of_day) or request.form.get('user_choice_end_time_of_day', '') }}"></div>
                 <div class="col-12">
                     <div class="form-text">
                         <small>依序為：可選開始日期、可選結束日期、每日可選開始時間、每日可選結束時間</small>
