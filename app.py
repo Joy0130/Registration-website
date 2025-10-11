@@ -3,147 +3,120 @@ import uuid
 import io
 from datetime import datetime, timedelta, time
 from flask import Flask, render_template, request, redirect, url_for, jsonify, flash, send_from_directory, abort, send_file
-from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import func
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from apscheduler.schedulers.background import BackgroundScheduler
 from openpyxl.styles import Font
 import openpyxl
+from functools import wraps
+from zoneinfo import ZoneInfo # <-- 引入時區模組
+from types import SimpleNamespace # <-- 引入 SimpleNamespace
+
+# --- Firebase Admin SDK 初始化 ---
+import firebase_admin
+from firebase_admin import credentials, firestore, storage
+# 移除了不必要的 Transaction import
+
+
+# 確保這個檔案路徑是正確的，且檔案已加入 .gitignore
+# 建議使用相對路徑，例如 './serviceAccountKey.json'
+cred = credentials.Certificate("/Users/joy/Documents/Registration website/serviceAccountKey.json")
+firebase_admin.initialize_app(cred, {
+    # 請務必將 'YOUR_PROJECT_ID' 替換成你的 Firebase 專案 ID
+    'storageBucket': 'bank-robot-45a15.appspot.com' 
+})
+
+db = firestore.client() # 使用 firestore 存取資料庫
+bucket = storage.bucket() # 使用 storage 存取檔案儲存桶
+
 # --- App 組態設定 ---
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or 'a_default_secret_key'  # 可從環境變數取得，若無則使用預設值 (開發時可用)
-#app.config['SECRET_KEY'] = 'a_very_secret_key_that_should_be_changed' # 測試用
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///../instance/database.db' # SQLite 資料庫路徑
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False # 關閉不必要的追蹤功能以節省資源
-app.config['UPLOAD_FOLDER'] = 'uploads' # 上傳檔案的資料夾
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True) # 確保上傳資料夾存在
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or 'a_default_secret_key'
+app.config['UPLOAD_FOLDER'] = 'uploads' # 檔案上傳的本地暫存資料夾
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-db = SQLAlchemy(app)
-login_manager = LoginManager(app) # App 初始化登入管理
-login_manager.login_view = 'login' # 如果使用者未登入就嘗試訪問受保護頁面，會被導向到登入頁
+# --- 時區設定 ---
+TAIWAN_TZ = ZoneInfo("Asia/Taipei")
+
+# --- 時間格式化輔助函式 ---
+def to_taiwan_time_str(dt_utc, fmt='%Y-%m-%d %H:%M:%S'):
+    """將 Firestore 回傳的 UTC datetime 物件轉換為台灣時間的字串"""
+    if not dt_utc:
+        return ""
+    # Firestore SDK 回傳的是帶有 UTC 時區的 datetime 物件
+    return dt_utc.astimezone(TAIWAN_TZ).strftime(fmt)
+
+# --- Flask-Login 初始化 ---
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
 login_manager.login_message = "請先登入。"
 
-# --- 使用者 table (Models) ---
-class User(UserMixin, db.Model):
-    id = db.Column(db.Integer, primary_key=True) # 使用者ID 唯一值
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    password_hash = db.Column(db.String(200), nullable=False) # 儲存雜湊後的密碼
-    is_admin = db.Column(db.Boolean, default=False) # 是否為管理者
-    __table_args__ = {'extend_existing': True} # 避免重複定義表格錯誤
-    # 密碼相關方法
-    def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
-    # 檢查密碼是否正確
+# --- 新的 User Class (不再是 SQLAlchemy Model) ---
+class User(UserMixin):
+    def __init__(self, user_id, username, password_hash, is_admin=False):
+        self.id = user_id
+        self.username = username
+        self.password_hash = password_hash
+        self.is_admin = is_admin
+
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
-# --- 課程與報名相關table Models ---
-class Course(db.Model):
-    __tablename__ = 'course' # 建議明確指定表名
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(120), nullable=False)
-    description = db.Column(db.Text, nullable=False) # 課程描述
-    speaker_info = db.Column(db.String(200)) # 講者資訊
-    has_time_slots = db.Column(db.Boolean, default=False, nullable=False) # 是否有梯次
-    status = db.Column(db.String(20), default='尚未開放') # 課程狀態：尚未開放、報名中、報名截止
-    registration_start_time = db.Column(db.DateTime, nullable=False) # 報名開始時間
-    registration_end_time = db.Column(db.DateTime, nullable=False) # 報名截止時間
-    allow_user_to_choose_time = db.Column(db.Boolean, default=False, nullable=False) # 是否允許使用者自選時間
-    duration_hours = db.Column(db.Float, nullable=True, default=1) # 新增：上課時數欄位
-    user_choice_start_date = db.Column(db.Date, nullable=True) # 自選時間的可選起始日
-    user_choice_end_date = db.Column(db.Date, nullable=True) # 自選時間的可選結束日
-    user_choice_start_time_of_day = db.Column(db.Time, nullable=True) # 自選時間的每日可選起始時間
-    user_choice_end_time_of_day = db.Column(db.Time, nullable=True) # 自選時間的每日可選結束時間
+    @staticmethod
+    def from_doc(doc):
+        if doc.exists:
+            data = doc.to_dict()
+            return User(
+                user_id=doc.id,
+                username=data.get('username'),
+                password_hash=data.get('password_hash'),
+                is_admin=data.get('is_admin', False)
+            )
+        return None
 
-    __table_args__ = {'extend_existing': True} # 避免重複定義表格錯誤
-
-    # --- 關聯 (Relationships) ---
-    files = db.relationship('CourseFile', backref='course', lazy=True, cascade="all, delete-orphan") # 課程有多個檔案，刪除課程時也刪除相關檔案
-    time_slots = db.relationship('TimeSlot', backref='course', lazy=True, cascade="all, delete-orphan") # 課程有多個梯次，刪除課程時也刪除相關梯次
-
-# 報名紀錄 table
-class Registration(db.Model):
-    __tablename__ = 'registration'
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    time_slot_id = db.Column(db.Integer, db.ForeignKey('time_slot.id'), nullable=False) # 報名的梯次
-    registration_time = db.Column(db.DateTime, default=datetime.utcnow) # 儲存的是 UTC 時間
-    __table_args__ = {'extend_existing': True}
-
-    # --- 關聯 (Relationships) ---
-    user = db.relationship('User', backref=db.backref('registrations', lazy=True))
-    time_slot = db.relationship('TimeSlot', backref=db.backref('registrations', lazy='dynamic', cascade="all, delete-orphan", single_parent=True)) # 一個梯次有多個報名紀錄
-
-    # --- 輔助函式 ---
-    def local_registration_time(self):
-        """將儲存的 UTC 時間轉換為台灣本地時間 (UTC+8)"""
-        return self.registration_time + timedelta(hours=8)
-    
-# 課程檔案 table
-class CourseFile(db.Model):
-    __tablename__ = 'course_file' # 明確指定表名，避免與其他表名衝突
-    id = db.Column(db.Integer, primary_key=True) # 檔案ID 唯一值
-    file_path = db.Column(db.String(300), nullable=False) # 儲存 UUID 檔名
-    display_filename = db.Column(db.String(300), nullable=False) # 儲存原始檔名 (顯示用)
-    course_id = db.Column(db.Integer, db.ForeignKey('course.id'), nullable=False) # 課程ID 外鍵，參考 Course 表
-    __table_args__ = {'extend_existing': True} # 避免重複定義表格錯誤
-
-# 課程梯次 table 起迄日
-class TimeSlot(db.Model):
-    __tablename__ = 'time_slot'
-    id = db.Column(db.Integer, primary_key=True)
-    # 將 slot_time 拆分為開始與結束時間
-    slot_start_time = db.Column(db.DateTime, nullable=False)
-    slot_end_time = db.Column(db.DateTime, nullable=False)
-    capacity = db.Column(db.Integer, nullable=False, default=999) # 梯次名額
-    booked_count = db.Column(db.Integer, default=0) # 已報名人數
-    course_id = db.Column(db.Integer, db.ForeignKey('course.id'), nullable=False) # 課程ID 外鍵，參考 Course 表
-    __table_args__ = {'extend_existing': True} # 避免重複定義表格錯誤
-
-
-
-# --- 使用者載入函式 (Flask-Login) ---
+# --- 重寫 user_loader 來從 Firestore 載入使用者 ---
 @login_manager.user_loader
-def load_user(user_id): # 透過 user_id 載入使用者
-    return User.query.get(int(user_id)) # 從資料庫取得使用者資料
+def load_user(user_id):
+    user_doc = db.collection('users').document(user_id).get()
+    return User.from_doc(user_doc)
 
 # --- 定時任務 (自動更新課程狀態) ---
 def check_course_status():
     with app.app_context():
         print(" [Scheduler] 正在檢查課程狀態...")
-        now = datetime.now()
+        now = datetime.now(TAIWAN_TZ) # <-- 使用台灣時區的當前時間
+        batch = db.batch()
 
-        # 檢查任務一：檢查哪些課程應該從「尚未開放」變為「報名中」
-        courses_to_open = Course.query.filter(Course.status == '尚未開放', Course.registration_start_time <= now).all()
-        for course in courses_to_open:
-            # 額外檢查：確保開始時間已到，但結束時間還沒到
-            if now < course.registration_end_time:
-                course.status = '報名中'
-                print(f" [Scheduler] 課程 '{course.name}' 已自動開放報名。")
-            else:
-                # 處理一種特殊情況：管理員設定的開始時間和結束時間都已經是過去式
-                course.status = '報名截止'
-                print(f" [Scheduler] 課程 '{course.name}' 已過截止日期，直接設為報名截止。")
+        # 任務一：從「尚未開放」變為「報名中」
+        courses_to_open_query = db.collection('courses').where(filter=firestore.FieldFilter('status', '==', '尚未開放')).stream()
+        for course_doc in courses_to_open_query:
+            course = course_doc.to_dict()
+            if course.get('registration_start_time') and course.get('registration_start_time') <= now:
+                if now < course.get('registration_end_time'):
+                    batch.update(course_doc.reference, {'status': '報名中'})
+                    print(f" [Scheduler] 課程 '{course.get('name')}' 已自動開放報名。")
+                else:
+                    batch.update(course_doc.reference, {'status': '報名截止'})
+                    print(f" [Scheduler] 課程 '{course.get('name')}' 已過截止日期，直接設為報名截止。")
 
-        # 檢查任務二：檢查哪些課程應該從「報名中」變為「報名截止」
-        courses_to_close = Course.query.filter(Course.status == '報名中', Course.registration_end_time <= now).all()
-        for course in courses_to_close:
-            course.status = '報名截止'
-            print(f" [Scheduler] 課程 '{course.name}' 已自動截止報名。")
+        # 任務二：從「報名中」變為「報名截止」
+        courses_to_close_query = db.collection('courses').where(filter=firestore.FieldFilter('status', '==', '報名中')).stream()
+        for course_doc in courses_to_close_query:
+            course = course_doc.to_dict()
+            if course.get('registration_end_time') and course.get('registration_end_time') <= now:
+                batch.update(course_doc.reference, {'status': '報名截止'})
+                print(f" [Scheduler] 課程 '{course.get('name')}' 已自動截止報名。")
+        
+        batch.commit()
 
-        db.session.commit()
-
-scheduler = BackgroundScheduler(daemon=True) # 在背景中檢查課程狀態
-scheduler.add_job(check_course_status, 'interval', minutes=1) # 每分鐘檢查課成狀態
+scheduler = BackgroundScheduler(daemon=True, timezone=TAIWAN_TZ)
+scheduler.add_job(check_course_status, 'interval', minutes=1)
 scheduler.start()
 
 # --- 輔助函式 (檢查管理者權限) ---
-from functools import wraps
 def admin_required(f):
     @wraps(f)
-    # 檢查使用者是否為管理者
     def decorated_function(*args, **kwargs):
         if not current_user.is_authenticated or not current_user.is_admin:
             flash('您沒有權限。', 'danger')
@@ -156,109 +129,144 @@ def admin_required(f):
 def index():
     return render_template('index.html')
 
-#  我的課程頁面
 @app.route('/my_courses')
 @login_required
 def my_courses():
     return render_template('my_courses.html')
 
-# 課程詳情頁面
-# ---- START: 請用這段完整的程式碼取代舊的 course_detail 函式 ----
-@app.route('/course/<int:course_id>')
+@app.route('/course/<string:course_id>')
 def course_detail(course_id):
-    course = db.session.get(Course, course_id)
-    if not course:
+    course_doc = db.collection('courses').document(course_id).get()
+    if not course_doc.exists:
         abort(404)
     
-    available_slots = []
-    if course.has_time_slots:
-        # 找出還有名額的梯次
-        available_slots = TimeSlot.query.filter(
-            TimeSlot.course_id == course.id, 
-            TimeSlot.booked_count < TimeSlot.capacity
-        ).order_by(TimeSlot.slot_start_time).all() 
+    course = course_doc.to_dict()
+    course['id'] = course_doc.id
 
+    # 取得可用時段
+    available_slots = []
+    booked_slots_iso = []
+    if course.get('has_time_slots'):
+        slots_ref = db.collection('courses').document(course_id).collection('time_slots')
+        slots_query = slots_ref.order_by('slot_start_time').stream()
+        for slot_doc in slots_query:
+            slot = slot_doc.to_dict()
+            slot['id'] = slot_doc.id
+            # 過濾已滿時段
+            if slot.get('booked_count', 0) < slot.get('capacity', 999):
+                # 確保 slot_start_time 可序列化
+                if 'slot_start_time' in slot and isinstance(slot['slot_start_time'], datetime):
+                    slot['slot_start_time_iso'] = slot['slot_start_time'].isoformat()
+                    booked_slots_iso.append(slot['slot_start_time_iso'])
+                available_slots.append(slot)
+
+    # 檢查使用者是否已報名
     is_registered = False
     if current_user.is_authenticated:
-        # 檢查使用者是否已報名此課程的任何一個梯次
-        user_reg = Registration.query.join(TimeSlot).filter(
-            Registration.user_id == current_user.id,
-            TimeSlot.course_id == course.id
-        ).first()
-        is_registered = user_reg is not None
+        reg_query = db.collection('registrations')\
+                      .where('user_id', '==', current_user.id)\
+                      .where('course_id', '==', course_id)\
+                      .limit(1).stream()
+        is_registered = any(reg_query)
 
-    # --- 取得已被預約的自選時段 ---
-    booked_slots_display = []
-    booked_slots_iso = []
-    if course.allow_user_to_choose_time:
-        # 動態生成的梯次 capacity 為 1，代表已被預約
-        booked_slots_query = TimeSlot.query.filter_by(
-            course_id=course.id, capacity=1
-        ).order_by(TimeSlot.slot_start_time).all()
-        booked_slots_display = booked_slots_query
-        # 為了讓 JS 能比對，我們需要 ISO 格式的字串列表
-        booked_slots_iso = [slot.slot_start_time.isoformat() for slot in booked_slots_query]
+    # --- START: 【新增】取得「使用者自選時間」中已被預約的時段 ---
+    booked_user_choice_slots = []
+    if course.get('allow_user_to_choose_time'):
+        # 查詢所有由使用者自選且已預約的梯次
+        booked_slots_query = db.collection('courses').document(course_id)\
+                                 .collection('time_slots')\
+                                 .where(filter=firestore.FieldFilter('is_user_choice', '==', True))\
+                                 .order_by('slot_start_time')\
+                                 .stream()
+        for slot_doc in booked_slots_query:
+            # --- START: 【修正】將讀取的時間轉換為台灣時區 ---
+            slot_data = slot_doc.to_dict()
+            if slot_data.get('slot_start_time'):
+                slot_data['slot_start_time'] = slot_data['slot_start_time'].astimezone(TAIWAN_TZ)
+            if slot_data.get('slot_end_time'):
+                slot_data['slot_end_time'] = slot_data['slot_end_time'].astimezone(TAIWAN_TZ)
+            booked_user_choice_slots.append(slot_data)
+            # --- END ---
+    # --- END ---
 
-    # 為了讓前端能正確設定 min/max，我們需要組合完整的 datetime
+    # --- START: 【新增】處理「使用者自選時間」的範圍計算 ---
     user_choice_start_datetime = None
     user_choice_end_datetime = None
-    # 只有在允許自選時間且相關欄位都有值時才組合
-    if course.allow_user_to_choose_time and course.user_choice_start_date and course.user_choice_start_time_of_day:
-        user_choice_start_datetime = datetime.combine(course.user_choice_start_date, course.user_choice_start_time_of_day)
-    # 同理處理結束日期與時間
-    if course.allow_user_to_choose_time and course.user_choice_end_date and course.user_choice_end_time_of_day:
-        user_choice_end_datetime = datetime.combine(course.user_choice_end_date, course.user_choice_end_time_of_day)
-    # 將資料傳給模板        
+    if course.get('allow_user_to_choose_time'):
+        start_date = course.get('user_choice_start_date')
+        end_date = course.get('user_choice_end_date')
+        start_time_str = course.get('user_choice_start_time_of_day')
+        end_time_str = course.get('user_choice_end_time_of_day')
+
+        # 確保所有必要欄位都存在
+        if all([start_date, end_date, start_time_str, end_time_str]):
+            try:
+                # 將時間字串 'HH:MM' 轉換為 time 物件
+                start_time_obj = datetime.strptime(start_time_str, '%H:%M').time()
+                end_time_obj = datetime.strptime(end_time_str, '%H:%M').time()
+
+                # 組合日期與時間，並設定為台灣時區
+                user_choice_start_datetime = datetime.combine(start_date, start_time_obj).replace(tzinfo=TAIWAN_TZ)
+                user_choice_end_datetime = datetime.combine(end_date, end_time_obj).replace(tzinfo=TAIWAN_TZ)
+            except (ValueError, TypeError) as e:
+                print(f"處理自選時間範圍時發生錯誤: {e}")
+                # 如果出錯，保持為 None，前端將不會顯示
+    # --- END ---
+
+    # 回傳模板，確保 booked_slots_iso 永遠有值
     return render_template(
-        'course_detail.html', 
-        course=course, 
-        is_registered=is_registered, 
+        'course_detail.html',
+        course=course,
+        is_registered=is_registered,
         available_slots=available_slots,
-        user_choice_start_datetime=user_choice_start_datetime,
-        user_choice_end_datetime=user_choice_end_datetime,
-        booked_user_choice_slots=booked_slots_display,
-        booked_slots_iso=booked_slots_iso
+        booked_slots_iso=booked_slots_iso,
+        user_choice_start_datetime=user_choice_start_datetime, # 新增
+        user_choice_end_datetime=user_choice_end_datetime,   # 新增
+        booked_user_choice_slots=booked_user_choice_slots    # 新增
     )
-# ---- END ----
+
 
 # --- 使用者認證相關路由 ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
-    if request.method == 'POST': # 處理登入表單提交
+    if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
-        user = User.query.filter_by(username=username).first()
-        if user and user.check_password(password):
-            login_user(user, remember=True)
-            flash('登入成功！', 'success')
-            next_page = request.args.get('next')
-            return redirect(next_page or url_for('index'))
-        else:
-            flash('登入失敗，請檢查您的帳號或密碼。', 'danger')
+        
+        users_ref = db.collection('users').where(filter=firestore.FieldFilter('username', '==', username)).limit(1).stream()
+        user_doc = next(users_ref, None)
+        
+        if user_doc:
+            user = User.from_doc(user_doc)
+            if user and user.check_password(password):
+                login_user(user, remember=True)
+                flash('登入成功！', 'success')
+                next_page = request.args.get('next')
+                return redirect(next_page or url_for('index'))
+        
+        flash('登入失敗，請檢查您的帳號或密碼。', 'danger')
     return render_template('login.html')
 
-# 註冊頁面
 @app.route('/register', methods=['POST'])
 def register():
+    # ... (此函式無需修改) ...
     if current_user.is_authenticated:
         return redirect(url_for('index'))
     username = request.form['username']
     password = request.form['password']
-    
-    if User.query.filter_by(username=username).first():
+    users_ref = db.collection('users').where(filter=firestore.FieldFilter('username', '==', username)).limit(1).stream()
+    if any(users_ref):
         flash('這個帳號已經被註冊了。', 'warning')
         return redirect(url_for('login'))
-
-    new_user = User(username=username)
-    new_user.set_password(password)
-    db.session.add(new_user)
-    db.session.commit()
+    password_hash = generate_password_hash(password)
+    new_user_data = {'username': username, 'password_hash': password_hash, 'is_admin': False}
+    db.collection('users').add(new_user_data)
     flash('註冊成功，請登入！', 'success')
     return redirect(url_for('login'))
 
-# 登出路由
+
 @app.route('/logout')
 @login_required
 def logout():
@@ -266,907 +274,813 @@ def logout():
     flash('您已成功登出。', 'info')
     return redirect(url_for('index'))
 
-# --- 後台管理頁面路由 ---
+@app.route('/download_file')
+@login_required
+def download_file():
+    # ... (此函式無需修改) ...
+    storage_path = request.args.get('path')
+    if not storage_path:
+        abort(400, '缺少檔案路徑')
+    try:
+        blob = bucket.blob(storage_path)
+        if not blob.exists():
+            abort(404, '找不到指定的檔案')
+        signed_url = blob.generate_signed_url(expiration=timedelta(minutes=15), method='GET')
+        return redirect(signed_url)
+    except Exception as e:
+        print(f"產生簽署 URL 時發生錯誤: {e}")
+        abort(500, '無法產生下載連結')
+
+
+# --- API 路由 (供前端 JavaScript 呼叫) ---
+
+@app.route('/api/courses', methods=['GET'])
+def get_courses():
+    try:
+        courses_ref = db.collection('courses')
+        docs = courses_ref.stream()
+        courses_data = []
+
+        for doc in docs:
+            course = doc.to_dict()
+            course['id'] = doc.id
+            
+            # --- START: 【修正】改為在迴圈內進行複合查詢 ---
+            is_registered = False
+            if current_user.is_authenticated:
+                # 這個查詢需要一個複合索引 (user_id, course_id)，如果不存在，執行時會在終端機提供建立連結
+                reg_query = db.collection('registrations').where(filter=firestore.FieldFilter('user_id', '==', current_user.id)).where(filter=firestore.FieldFilter('course_id', '==', doc.id)).limit(1).stream()
+                is_registered = any(reg_query)
+            course['is_registered'] = is_registered
+            # --- END: 【修正】 ---
+
+            class_time_summary = "尚未設定"
+            if course.get('has_time_slots') and not course.get('allow_user_to_choose_time'):
+                slots_ref = db.collection('courses').document(doc.id).collection('time_slots').stream()
+                slots = [s.to_dict() for s in slots_ref]
+                if slots:
+                    all_start_times = [s['slot_start_time'] for s in slots if 'slot_start_time' in s]
+                    all_end_times = [s['slot_end_time'] for s in slots if 'slot_end_time' in s]
+                    if all_start_times and all_end_times:
+                        earliest_start_time = min(all_start_times)
+                        latest_end_time = max(all_end_times)
+                        start_str = to_taiwan_time_str(earliest_start_time, '%Y-%m-%d %H:%M')
+                        if earliest_start_time.date() == latest_end_time.date():
+                            end_str = to_taiwan_time_str(latest_end_time, '%H:%M')
+                        else:
+                            end_str = to_taiwan_time_str(latest_end_time, '%Y-%m-%d %H:%M')
+                        class_time_summary = f"{start_str} ~ {end_str}"
+            elif course.get('allow_user_to_choose_time'):
+                 class_time_summary = "自行選擇"
+            course['class_time_summary'] = class_time_summary
+            if 'files' in course and course['files']:
+                for file_data in course['files']:
+                    file_data['url'] = url_for('download_file', path=file_data.get('storage_path'))
+            course['registration_start_time'] = to_taiwan_time_str(course.get('registration_start_time'), fmt='%Y-%m-%d %H:%M')
+            course['registration_end_time'] = to_taiwan_time_str(course.get('registration_end_time'), fmt='%Y-%m-%d %H:%M')
+            courses_data.append(course)
+        
+        return jsonify(courses_data)
+    except Exception as e:
+        print(f"Error getting courses: {e}")
+        return jsonify({"error": "An error occurred"}), 500
+
+# --- START: 新增並實作「我報名的課程」API ---
+@app.route('/api/my_courses', methods=['GET'])
+@login_required
+def get_my_courses():
+    try:
+        status_filter = request.args.get('status')
+        my_registrations_data = []
+        now = datetime.now(TAIWAN_TZ)
+
+        regs_query = db.collection('registrations').where(filter=firestore.FieldFilter('user_id', '==', current_user.id)).stream()
+
+        for reg_doc in regs_query:
+            reg = reg_doc.to_dict()
+            course_id = reg.get('course_id')
+            slot_id = reg.get('time_slot_id')
+
+            if not course_id or not slot_id:
+                continue
+
+            course_doc = db.collection('courses').document(course_id).get()
+            slot_doc = db.collection('courses').document(course_id).collection('time_slots').document(slot_id).get()
+
+            if not course_doc.exists or not slot_doc.exists:
+                continue
+            
+            course = course_doc.to_dict()
+            slot = slot_doc.to_dict()
+            
+            slot_start_time = slot.get('slot_start_time')
+            slot_end_time = slot.get('slot_end_time')
+
+            if not slot_start_time or not slot_end_time:
+                continue
+            
+            registration_status = "狀態未知"
+            if now < slot_start_time:
+                registration_status = "課程即將開始"
+            elif slot_start_time <= now < slot_end_time:
+                registration_status = "課程進行中"
+            else:
+                registration_status = "課程已結束"
+
+            # 伺服器端篩選
+            if status_filter and status_filter != 'all' and status_filter != registration_status:
+                continue
+
+            my_registrations_data.append({
+                'registration_id': reg_doc.id,
+                'course_id': course_id,
+                'course_name': course.get('name'),
+                'class_time': f"{to_taiwan_time_str(slot_start_time, '%Y-%m-%d %H:%M')} ~ {to_taiwan_time_str(slot_end_time, '%H:%M')}",
+                'course_description': course.get('description'),
+                'speaker_info': course.get('speaker_info'),
+                'slot_start_time': slot_start_time.isoformat(),
+                'status': registration_status,
+                'files': course.get('files', [])
+            })
+        
+        # 伺服器端排序
+        def sort_key(reg):
+            slot_start = datetime.fromisoformat(reg['slot_start_time'])
+            if reg['status'] == '課程進行中':
+                return (0, slot_start)
+            elif reg['status'] == '課程即將開始':
+                return (1, slot_start)
+            else: # 課程已結束
+                return (2, -slot_start.timestamp())
+
+        sorted_registrations = sorted(my_registrations_data, key=sort_key)
+        
+        return jsonify(sorted_registrations)
+    except Exception as e:
+        print(f"取得我的課程時發生錯誤: {e}")
+        return jsonify({"error": "無法取得您的課程列表"}), 500
+# --- END ---
+
+@firestore.transactional
+def register_in_transaction(transaction, course_ref, slot_ref, user_id):
+    slot_snapshot = slot_ref.get(transaction=transaction)
+    if not slot_snapshot.exists:
+        raise Exception("找不到指定的梯次。")
+    
+    slot_data = slot_snapshot.to_dict()
+    booked_count = slot_data.get('booked_count', 0)
+    capacity = slot_data.get('capacity', 0)
+    
+    if booked_count >= capacity:
+        raise Exception("此梯次名額已滿。")
+        
+    transaction.update(slot_ref, {'booked_count': firestore.Increment(1)})
+    
+    reg_ref = db.collection('registrations').document()
+    transaction.set(reg_ref, {
+        'user_id': user_id,
+        'course_id': course_ref.id,
+        'time_slot_id': slot_ref.id,
+        'registration_time': firestore.SERVER_TIMESTAMP
+    })
+
+@app.route('/api/register', methods=['POST'])
+@login_required
+def register_for_slot():
+    try:
+        data = request.get_json()
+        course_id = data.get('course_id')
+        if not course_id:
+            return jsonify({'success': False, 'message': '缺少課程 ID'}), 400
+
+        course_ref = db.collection('courses').document(course_id)
+        course_doc = course_ref.get()
+        if not course_doc.exists or course_doc.to_dict().get('status') != '報名中':
+            return jsonify({'success': False, 'message': '此課程目前未開放報名'}), 400
+
+        existing_reg_query = db.collection('registrations').where(filter=firestore.FieldFilter('user_id', '==', current_user.id)).where(filter=firestore.FieldFilter('course_id', '==', course_id)).limit(1).stream()
+        if any(existing_reg_query):
+            return jsonify({'success': False, 'message': '您已經報名過此課程'}), 400
+
+        # --- START: 【修正】區分兩種報名模式 ---
+        slot_id = data.get('time_slot_id')
+        user_selected_time_str = data.get('user_selected_time')
+
+        if user_selected_time_str:
+            # 模式一：使用者自選時間
+            course_data = course_doc.to_dict()
+            duration_hours = course_data.get('duration_hours', 1) # 預設為 1 小時
+            start_time = datetime.fromisoformat(user_selected_time_str).replace(tzinfo=TAIWAN_TZ)
+            end_time = start_time + timedelta(hours=duration_hours)
+
+            # 為這個自選時間建立一個新的 time_slot 文件
+            slot_ref = course_ref.collection('time_slots').document()
+            slot_ref.set({
+                'slot_start_time': start_time,
+                'slot_end_time': end_time,
+                'capacity': 1, # 自選時間的梯次容量永遠是 1
+                'booked_count': 0,
+                'is_user_choice': True # 標記為使用者自選
+            })
+        elif slot_id:
+            # 模式二：固定梯次
+            slot_ref = course_ref.collection('time_slots').document(slot_id)
+        else:
+            return jsonify({'success': False, 'message': '報名資訊不完整，缺少梯次或自選時間'}), 400
+        # --- END: 【修正】 ---
+
+        transaction = db.transaction()
+        register_in_transaction(transaction, course_ref, slot_ref, current_user.id)
+        
+        return jsonify({'success': True, 'message': '報名成功！'})
+    except Exception as e:
+        print(f"報名時發生錯誤: {e}")
+        return jsonify({'success': False, 'message': f'{e}'}), 500
+
+@firestore.transactional
+def cancel_in_transaction(transaction, reg_ref, slot_ref, is_user_choice_slot=False):
+    """在交易中處理取消報名"""
+    # --- START: 【修正】徹底重構以遵循「先讀後寫」原則 ---
+    # 1. 先執行所有可能的讀取操作
+    slot_snapshot = None
+    if not is_user_choice_slot:
+        # 只有固定梯次才需要讀取 slot 資料來更新人數
+        slot_snapshot = slot_ref.get(transaction=transaction)
+
+    # 2. 再執行所有寫入操作
+    transaction.delete(reg_ref) # 寫入：刪除報名紀錄
+
+    if is_user_choice_slot:
+        transaction.delete(slot_ref) # 寫入：刪除自選的梯次
+    elif slot_snapshot and slot_snapshot.exists:
+        # 寫入：更新固定梯次的人數
+        transaction.update(slot_ref, {'booked_count': firestore.Increment(-1)})
+    # --- END: 【修正】 ---
+
+@app.route('/api/registrations/<string:registration_id>/cancel', methods=['POST'])
+@login_required
+def cancel_registration(registration_id):
+    try:
+        reg_ref = db.collection('registrations').document(registration_id)
+        reg_doc = reg_ref.get()
+
+        if not reg_doc.exists or reg_doc.to_dict().get('user_id') != current_user.id:
+            return jsonify({'success': False, 'message': '找不到您的報名紀錄或無權限操作。'}), 404
+
+        reg_data = reg_doc.to_dict()
+        course_id = reg_data.get('course_id')
+        slot_id = reg_data.get('time_slot_id')
+        slot_ref = db.collection('courses').document(course_id).collection('time_slots').document(slot_id)
+        slot_doc = slot_ref.get()
+        
+        if not slot_doc.exists:
+             reg_ref.delete()
+             return jsonify({'success': True, 'message': '已成功取消報名(課程梯次不存在)。'})
+        
+        slot_data = slot_doc.to_dict()
+        slot_start_time = slot_data.get('slot_start_time')
+        if datetime.now(TAIWAN_TZ) > (slot_start_time - timedelta(days=1)):
+             return jsonify({'success': False, 'message': '已超過取消期限 (課程開始前24小時)，無法取消報名。'}), 400
+
+        # --- START: 【修正】判斷是否為使用者自選的梯次 ---
+        is_user_choice = slot_data.get('is_user_choice', False)
+        transaction = db.transaction()
+        cancel_in_transaction(transaction, reg_ref, slot_ref, is_user_choice_slot=is_user_choice)
+        # --- END ---
+
+        return jsonify({'success': True, 'message': "已成功取消報名。"})
+
+    except Exception as e:
+        print(f"取消報名時發生錯誤: {e}")
+        return jsonify({'success': False, 'message': f'處理取消時發生錯誤: {e}'}), 500
+# --- END ---
+
+
+# --- 後台管理路由與 API ---
 @app.route('/admin')
 @login_required
 @admin_required
 def admin_dashboard():
     return render_template('admin_dashboard.html')
 
-# 新增與編輯課程頁面
 @app.route('/admin/course/new')
 @login_required
 @admin_required
 def new_course():
     return render_template('admin_course_form.html', course=None)
 
-# 編輯課程頁面
-@app.route('/admin/course/edit/<int:course_id>')
+@app.route('/admin/course/edit/<string:course_id>')
 @login_required
 @admin_required
 def edit_course(course_id):
-    course = Course.query.get_or_404(course_id)
-    return render_template('admin_course_form.html', course=course)
+    course_doc = db.collection('courses').document(course_id).get()
+    if course_doc.exists:
+        course = course_doc.to_dict()
+        course['id'] = course_doc.id
+        return render_template('admin_course_form.html', course=course)
+    else:
+        flash('找不到指定的課程', 'warning')
+        return redirect(url_for('admin_dashboard'))
 
-# 顯示所有報名紀錄的頁面ß
+# --- START: 【修正】重構 all_registrations 以符合樣板 ---
 @app.route('/admin/all_registrations')
 @login_required
 @admin_required
 def all_registrations():
-    """顯示所有使用者的報名紀錄，並支援多條件篩選。"""
-    # 基礎查詢，預先 JOIN 需要用到的 Table
-    query = Registration.query.join(TimeSlot).join(User)
+    try:
+        # --- START: 【修正】實作篩選邏輯 ---
+        query = db.collection('registrations')
 
-    # 1. 根據「報名 ID」篩選
-    reg_id_str = request.args.get('registration_id')
-    if reg_id_str:
-        try:
-            query = query.filter(Registration.id == int(reg_id_str))
-        except ValueError:
-            flash('報名 ID 必須是數字', 'warning')
+        # 取得篩選參數
+        filter_username = request.args.get('username')
+        filter_course_id = request.args.get('course_id')
+        filter_registration_date = request.args.get('registration_date')
+        filter_slot_date = request.args.get('slot_date') # 較複雜，稍後處理
 
-    # 2. 根據「使用者名稱」篩選 (模糊查詢，不分大小寫)
-    username = request.args.get('username')
-    if username:
-        query = query.filter(User.username.ilike(f"%{username}%"))
+        # 1. 依使用者名稱篩選
+        if filter_username:
+            # 先找到符合名稱的使用者 ID
+            users_query = db.collection('users').where(filter=firestore.FieldFilter('username', '>=', filter_username)).where(filter=firestore.FieldFilter('username', '<=', filter_username + '\uf8ff')).stream()
+            user_ids = [user.id for user in users_query]
+            if not user_ids: # 如果找不到任何使用者，直接回傳空結果
+                return render_template('admin_all_registrations.html', registrations=[], all_courses=[], request=request)
+            # Firestore 'in' 查詢最多支援 30 個值
+            query = query.where(filter=firestore.FieldFilter('user_id', 'in', user_ids[:30]))
 
-    # 3. 根據「報名課程」篩選
-    course_id_str = request.args.get('course_id')
-    if course_id_str:
-        try:
-            query = query.filter(TimeSlot.course_id == int(course_id_str))
-        except ValueError:
-            flash('課程 ID 格式不正確', 'warning')
+        # 2. 依課程 ID 篩選
+        if filter_course_id:
+            query = query.where(filter=firestore.FieldFilter('course_id', '==', filter_course_id))
 
-    # 4. 根據「梯次上課日期」篩選
-    slot_date_str = request.args.get('slot_date')
-    if slot_date_str:
-        try:
-            slot_date = datetime.strptime(slot_date_str, '%Y-%m-%d').date()
-            query = query.filter(func.date(TimeSlot.slot_start_time) == slot_date)
-        except ValueError:
-            flash('梯次日期格式不正確', 'warning')
+        # 3. 依報名日期篩選
+        if filter_registration_date:
+            try:
+                start_date = datetime.strptime(filter_registration_date, '%Y-%m-%d').replace(tzinfo=TAIWAN_TZ)
+                end_date = start_date + timedelta(days=1)
+                query = query.where(filter=firestore.FieldFilter('registration_time', '>=', start_date)).where(filter=firestore.FieldFilter('registration_time', '<', end_date))
+            except ValueError:
+                flash('報名日期格式不正確', 'warning')
 
-    # 5. 根據「報名日期 (台灣時間)」篩選
-    reg_date_str = request.args.get('registration_date')
-    if reg_date_str:
-        try:
-            reg_date = datetime.strptime(reg_date_str, '%Y-%m-%d').date()
-            start_of_day_cst = datetime.combine(reg_date, datetime.min.time())
-            end_of_day_cst = datetime.combine(reg_date, datetime.max.time())
-            start_of_day_utc = start_of_day_cst - timedelta(hours=8)
-            end_of_day_utc = end_of_day_cst - timedelta(hours=8)
-            query = query.filter(Registration.registration_time.between(start_of_day_utc, end_of_day_utc))
-        except ValueError:
-            flash('報名日期格式不正確', 'warning')
-    
-    # 取得所有課程列表，用於填充下拉選單
-    all_courses = Course.query.order_by(Course.name).all()
-    
-    # 執行最終查詢並排序
-    all_regs = query.order_by(Registration.id.desc()).all()
-    
-    # 將 request 和 all_courses 物件傳給模板
-    return render_template(
-        'admin_all_registrations.html', 
-        registrations=all_regs, 
-        all_courses=all_courses, 
-        request=request
-    )
+        # 執行最終查詢，並預設排序
+        # 注意：如果上面有用到不等式篩選(如日期)
+        if filter_registration_date:
+             regs_ref = query.order_by('registration_time', direction=firestore.Query.DESCENDING).stream()
+        else:
+             regs_ref = query.order_by('registration_time', direction=firestore.Query.DESCENDING).stream()
+        # --- END: 【修正】 ---
 
-# ---- START: 新增的匯出 Excel 路由 ----
+        all_regs_structured = []
+
+        for reg_doc in regs_ref: # 現在 regs_ref 是篩選後的結果
+            reg_data = reg_doc.to_dict()
+
+            user_doc = db.collection('users').document(reg_data.get('user_id')).get()
+            course_doc = db.collection('courses').document(reg_data.get('course_id')).get()
+            slot_doc = db.collection('courses').document(reg_data.get('course_id')).collection('time_slots').document(reg_data.get('time_slot_id')).get()
+
+            # 建立巢狀物件以符合 Jinja2 樣板的存取方式
+            user_obj = SimpleNamespace(username=user_doc.to_dict().get('username', 'N/A') if user_doc.exists else 'N/A')
+            course_obj = SimpleNamespace(name=course_doc.to_dict().get('name', 'N/A') if course_doc.exists else 'N/A')
+            
+            slot_start_time_utc = slot_doc.to_dict().get('slot_start_time') if slot_doc.exists else None
+            slot_end_time_utc = slot_doc.to_dict().get('slot_end_time') if slot_doc.exists else None
+            
+            slot_obj = SimpleNamespace(
+                course=course_obj,
+                # Pre-convert to Taiwan time datetime objects
+                slot_start_time=slot_start_time_utc.astimezone(TAIWAN_TZ) if slot_start_time_utc else None,
+                slot_end_time=slot_end_time_utc.astimezone(TAIWAN_TZ) if slot_end_time_utc else None
+            )
+
+            registration_time_utc = reg_data.get('registration_time')
+
+            # 建立最終的 registration 物件
+            structured_reg = SimpleNamespace(
+                id=reg_doc.id,
+                user=user_obj,
+                time_slot=slot_obj,
+                registration_time=registration_time_utc,
+                # --- 【修正】直接轉換為台灣時區的 datetime 物件 ---
+                local_registration_time=registration_time_utc.astimezone(TAIWAN_TZ) if registration_time_utc else None
+            )
+
+            # --- START: 【修正】後端進行「上課時間」日期的篩選 ---
+            should_add = True
+            if filter_slot_date:
+                try:
+                    slot_filter_date = datetime.strptime(filter_slot_date, '%Y-%m-%d').date()
+                    if not (structured_reg.time_slot and structured_reg.time_slot.slot_start_time and structured_reg.time_slot.slot_start_time.date() == slot_filter_date):
+                        should_add = False
+                except ValueError:
+                    flash('上課日期格式不正確', 'warning')
+                    should_add = False # 日期格式錯，不加入
+            
+            if should_add:
+                all_regs_structured.append(structured_reg)
+            # --- END: 【修正】 ---
+
+
+        all_courses_docs = db.collection('courses').order_by('name').stream()
+        all_courses = [{'id': doc.id, **doc.to_dict()} for doc in all_courses_docs]
+
+        return render_template(
+            'admin_all_registrations.html', 
+            registrations=all_regs_structured,
+            all_courses=all_courses,
+            request=request
+        )
+    except Exception as e:
+        print(f"載入報名紀錄時發生錯誤: {e}")
+        flash(f'載入報名紀錄時發生錯誤: {e}', 'danger')
+        return render_template('admin_all_registrations.html', registrations=[], all_courses=[])
+# --- END ---
+
+
+# --- START: 【修正】匯出 Excel 路由 ---
 @app.route('/admin/export_registrations')
 @login_required
 @admin_required
 def export_registrations_to_excel():
-    """根據篩選條件，將報名紀錄匯出為 Excel 檔案。"""
-    # --- 這段查詢邏輯與 all_registrations 函式完全相同 ---
-    query = Registration.query.join(TimeSlot).join(User) # 預先 JOIN 需要用到的 Table
+    try:
+        # 這裡先實作匯出所有紀錄，之後可再加入篩選邏輯
+        registrations_ref = db.collection('registrations').order_by('registration_time').stream()
 
-    reg_id_str = request.args.get('registration_id') # 根據「報名 ID」篩選
-    if reg_id_str:
-        try:
-            query = query.filter(Registration.id == int(reg_id_str)) # 嘗試轉換為整數
-        except ValueError: pass
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "報名紀錄"
 
-    username = request.args.get('username') # 根據「使用者名稱」篩選 (模糊查詢，不分大小寫)
-    if username:
-        query = query.filter(User.username.ilike(f"%{username}%"))
+        header_font = Font(name='Calibri', size=16, bold=True)
+        headers = ["報名 ID", "使用者名稱", "報名課程", "上課時間", "報名時間"]
+        sheet.append(headers)
+        for cell in sheet[1]:
+            cell.font = header_font
 
-    course_id_str = request.args.get('course_id') # 根據「報名課程」篩選
-    if course_id_str:
-        try:
-            query = query.filter(TimeSlot.course_id == int(course_id_str))
-        except ValueError: pass
+        for reg_doc in registrations_ref:
+            reg = reg_doc.to_dict()
+            user_doc = db.collection('users').document(reg['user_id']).get()
+            course_doc = db.collection('courses').document(reg['course_id']).get()
+            slot_doc = db.collection('courses').document(reg['course_id']).collection('time_slots').document(reg['time_slot_id']).get()
 
-    slot_date_str = request.args.get('slot_date') # 根據「梯次上課日期」篩選
-    if slot_date_str:
-        try:
-            slot_date = datetime.strptime(slot_date_str, '%Y-%m-%d').date()
-            query = query.filter(func.date(TimeSlot.slot_start_time) == slot_date)
-        except ValueError: pass
-
-    reg_date_str = request.args.get('registration_date') # 根據「報名日期」篩選
-    if reg_date_str:
-        try:
-            reg_date = datetime.strptime(reg_date_str, '%Y-%m-%d').date()
-            start_of_day_cst = datetime.combine(reg_date, datetime.min.time())
-            end_of_day_cst = datetime.combine(reg_date, datetime.max.time())
-            start_of_day_utc = start_of_day_cst - timedelta(hours=8)
-            end_of_day_utc = end_of_day_cst - timedelta(hours=8)
-            query = query.filter(Registration.registration_time.between(start_of_day_utc, end_of_day_utc))
-        except ValueError: pass
-
-    registrations = query.order_by(Registration.id.desc()).all() # 執行最終查詢並排序
-
-    # --- 使用 openpyxl 建立 Excel 檔案 ---
-    workbook = openpyxl.Workbook()
-    sheet = workbook.active
-    sheet.title = "報名紀錄"
-
-    # --- 定義匯出excel中的字體和表頭樣式 ---
-    # 定義一般儲存格的字體樣式
-    default_font = Font(name='Calibri', size=14)
-    # 定義表頭的字體樣式 (粗體)
-    header_font = Font(name='Calibri', size=16, bold=True)
-
-    # 寫入表頭
-    headers = ["報名 ID", "使用者名稱", "報名課程", "上課時間", "報名時間"]
-    sheet.append(headers)
-    # 將表頭設定為粗體
-    for cell in sheet[1]:
-        cell.font = header_font
-
-    # 寫入資料
-    for reg in registrations:
-        slot_time_str = f"{reg.time_slot.slot_start_time.strftime('%Y-%m-%d %H:%M')} ~ {reg.time_slot.slot_end_time.strftime('%H:%M')}"
-        row = [reg.id, reg.user.username, reg.time_slot.course.name, slot_time_str, reg.local_registration_time().strftime('%Y-%m-%d %H:%M:%S')]
-        sheet.append(row)
-
-    # --- 調整欄寬與套用字體 ---
-    # 遍歷所有儲存格，套用預設字體
-    for row in sheet.iter_rows(min_row=2): # 從第二行開始，因為表頭已設定
-        for cell in row:
-            cell.font = default_font
-
-    # 根據內容自動調整欄寬
-    for column_cells in sheet.columns:
-        max_length = 0
-        column_letter = column_cells[0].column_letter # 獲取欄位字母 (e.g., 'A')
-        for cell in column_cells:
-            # 考慮中文字元寬度約為英數字元的兩倍
-            cell_length = sum(2 if '\u4e00' <= char <= '\u9fff' else 1 for char in str(cell.value))
-            if cell_length > max_length:
-                max_length = cell_length
-        adjusted_width = max_length + 6 # 增加一點額外寬度
-        sheet.column_dimensions[column_letter].width = adjusted_width
-
-    # 將檔案儲存到記憶體中
-    output = io.BytesIO()
-    workbook.save(output)
-    output.seek(0)
-
-    return send_file(output, as_attachment=True, download_name='registrations.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-# --- END 使用 openpyxl 建立 Excel 檔案 ---
-
-# @app.route('/uploads/<filename>')
-# def uploaded_file(filename):
-#    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
-
-# 下載檔案路由
-@app.route('/download/<int:file_id>')
-@login_required
-def download_file(file_id):
-    course_file = db.session.get(CourseFile, file_id)
-    if not course_file:
-        flash('找不到指定的檔案', 'warning')
-        
-    # 在提供下載時才使用 secure_filename
-    safe_display_name = secure_filename(course_file.display_filename)
-
-    return send_from_directory(
-        app.config['UPLOAD_FOLDER'], 
-        course_file.file_path, 
-        as_attachment=True, 
-        download_name=safe_display_name # 使用淨化後的檔名
-    )
-# ---- END ----
-
-# --- API 路由 (供前端 JavaScript 呼叫) ---
-
-# [GET] 取得課程列表 (支援搜尋與篩選)
-@app.route('/api/courses', methods=['GET'])
-def get_courses():
-    query = Course.query
-    search = request.args.get('search')
-    status = request.args.get('status')
-
-    if search:
-        query = query.filter(Course.name.contains(search))
-    if status and status != 'all':
-        query = query.filter_by(status=status)
-    
-    courses = query.all()
-
-    # --- 計算每門課程的排序用時間戳 ---
-    now = datetime.now()
-    for c in courses:
-        c.sort_timestamp = datetime.max # 預設一個很大的時間，讓沒有時間的課程排在最後
-        if c.time_slots:
-            # 過濾掉已經過去的梯次，只考慮未來的最早梯次
-            future_slots = [s.slot_start_time for s in c.time_slots if s.slot_start_time > now]
-            if future_slots:
-                c.sort_timestamp = min(future_slots)
-        elif c.allow_user_to_choose_time and c.user_choice_start_date:
-            # 如果是自選時間，使用可選的開始日期作為排序依據
-            # 為了能和其他 datetime 物件比較，我們組合一個 datetime
-            c.sort_timestamp = datetime.combine(c.user_choice_start_date, datetime.min.time())
-
-    # 1. '報名中' 的課程優先
-    # 2. 其他課程依照 sort_timestamp (最早開始時間) 由近到遠排序
-    courses.sort(key=lambda c: (c.status != '報名中', c.sort_timestamp))
-
-    courses_data = []
-    # 遍歷每一門課程，組合成前端需要的 JSON 格式
-    for c in courses:
-        is_registered = False
-        if current_user.is_authenticated:
-            user_reg = Registration.query.join(TimeSlot).filter(
-                Registration.user_id == current_user.id,
-                TimeSlot.course_id == c.id
-            ).first()
-            is_registered = user_reg is not None
-        
-        class_time_summary = "尚未設定"
-        if c.time_slots:
-            earliest_start_time = min(slot.slot_start_time for slot in c.time_slots)
-            latest_end_time = max(slot.slot_end_time for slot in c.time_slots)
-            start_str = earliest_start_time.strftime('%Y-%m-%d %H:%M')
-            if earliest_start_time.date() == latest_end_time.date():
-                end_str = latest_end_time.strftime('%H:%M')
-            else:
-                end_str = latest_end_time.strftime('%Y-%m-%d %H:%M')
-            class_time_summary = f"{start_str} ~ {end_str}"
-
-        # --- 判斷課程是否已額滿 ---
-        is_full = False
-        # 只有在有固定梯次且非自選時間的模式下，才需要判斷是否額滿
-        if c.has_time_slots and not c.allow_user_to_choose_time:
-            # 查詢是否還存在任何一個有剩餘名額的梯次
-            available_slot_exists = db.session.query(TimeSlot.query.filter(
-                TimeSlot.course_id == c.id,
-                TimeSlot.booked_count < TimeSlot.capacity
-            ).exists()).scalar()
-            is_full = not available_slot_exists
-        
-        courses_data.append({
-            'id': c.id,
-            'name': c.name,
-            'description': c.description,
-            'speaker_info': c.speaker_info,
-            'status': c.status,
-            'class_time_summary': class_time_summary, # 課程時間摘要
-            'registration_start_time': c.registration_start_time.strftime('%Y-%m-%d %H:%M'),
-            'registration_end_time': c.registration_end_time.strftime('%Y-%m-%d %H:%M'),
-            'is_full': is_full, # <--- 新增的欄位
-            'is_registered': is_registered, # 使用者是否已報名
-            # 課程檔案列表
-            'files': [
-                {'id': f.id, 'url': url_for('download_file', file_id=f.id), 'name': f.display_filename} 
-                for f in c.files
+            username = user_doc.to_dict().get('username', 'N/A') if user_doc.exists else 'N/A'
+            course_name = course_doc.to_dict().get('name', 'N/A') if course_doc.exists else 'N/A'
+            
+            slot_time_str = "N/A"
+            if slot_doc.exists:
+                slot = slot_doc.to_dict()
+                slot_time_str = f"{to_taiwan_time_str(slot.get('slot_start_time'), '%Y-%m-%d %H:%M')} ~ {to_taiwan_time_str(slot.get('slot_end_time'), '%H:%M')}"
+            
+            row = [
+                reg_doc.id, 
+                username, 
+                course_name, 
+                slot_time_str, 
+                to_taiwan_time_str(reg.get('registration_time'))
             ]
-        })
+            sheet.append(row)
 
-    return jsonify(courses_data)
-# ---- END ----
+        output = io.BytesIO()
+        workbook.save(output)
+        output.seek(0)
 
-# [GET] 取得我報名的課程
-@app.route('/api/my_courses', methods=['GET'])
-@login_required
-def get_my_courses():
-    """
-    取得目前使用者報名的課程列表。
-    支援透過 query string `status` 進行篩選：
-    - '課程即將開始'
-    - '課程進行中'
-    - '課程已結束'
-    """
-    status_filter = request.args.get('status')
-    # --- 修正：使用本地時間 (now) 來進行比較，以匹配資料庫中儲存的本地時間 ---
-    now = datetime.now()
+        return send_file(output, as_attachment=True, download_name='registrations.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
-    # 1. 建立基礎查詢，找出這位使用者所有的報名紀錄
-    query = Registration.query.filter_by(user_id=current_user.id).join(TimeSlot)
+    except Exception as e:
+        flash(f"匯出 Excel 時發生錯誤: {e}", "danger")
+        return redirect(url_for('all_registrations'))
+# --- END ---
 
-    # 2. 根據傳入的 status 參數，增加時間過濾條件
-    if status_filter == '課程即將開始':
-        query = query.filter(TimeSlot.slot_start_time > now)
-    elif status_filter == '課程進行中':
-        query = query.filter(TimeSlot.slot_start_time <= now, TimeSlot.slot_end_time > now)
-    elif status_filter == '課程已結束':
-        query = query.filter(TimeSlot.slot_end_time <= now)
+def _handle_file_uploads_storage(files, course_id):
+    uploaded_files_metadata = []
+    for file in files:
+        if file and file.filename != '':
+            original_filename = secure_filename(file.filename)
+            _, ext = os.path.splitext(original_filename)
+            unique_filename = f"{uuid.uuid4().hex}{ext}"
+            storage_path = f"course_files/{course_id}/{unique_filename}"
+            blob = bucket.blob(storage_path)
+            blob.upload_from_file(file)
+            uploaded_files_metadata.append({"display_name": original_filename, "storage_path": storage_path, "upload_time": datetime.utcnow()})
+    return uploaded_files_metadata
 
-    # 3. 執行查詢與排序
-    if status_filter and status_filter != 'all':
-        # 如果是篩選特定狀態，則統一由舊到新排序
-        registrations = query.order_by(TimeSlot.slot_start_time.asc()).all()
-    else:
-        # 如果是顯示「全部」，則套用自訂排序邏輯
-        all_regs = query.all()
-        
-        def sort_key(reg):
-            slot = reg.time_slot
-            
-            if slot.slot_start_time <= now < slot.slot_end_time:
-                # 1. 進行中的課程，優先級最高
-                return (0, slot.slot_start_time)
-            elif now < slot.slot_start_time:
-                # 2. 即將開始的課程，次高，按開始時間升序
-                return (1, slot.slot_start_time)
-            else:
-                # 3. 已結束的課程，最低，按開始時間降序 (最近結束的排在前面)
-                return (2, -slot.slot_start_time.timestamp())
-        registrations = sorted(all_regs, key=sort_key)
-    
-    my_registrations_data = []
-    for reg in registrations:
-        try:
-            # 進行防錯檢查，確保關聯的資料都存在
-            if not reg.time_slot or not reg.time_slot.course:
-                continue  # 如果是無效的報名，直接跳到下一筆
+def _handle_time_slots_firestore(data, course_ref):
+    slot_start_times = data.getlist('slot_start_times')
+    slot_end_times = data.getlist('slot_end_times')
+    slot_capacities = data.getlist('slot_capacities')
 
-            course = reg.time_slot.course
-            slot = reg.time_slot
-            
-            # 4. 格式化該次報名的梯次時間
-            # 判斷課程狀態
-            if now < slot.slot_start_time:
-                registration_status = "課程即將開始"
-            elif slot.slot_start_time <= now < slot.slot_end_time:
-                registration_status = "課程進行中"
-            else:
-                registration_status = "課程已結束"
+    if not slot_start_times:
+        raise ValueError("固定梯次模式下，請至少設定一個上課時間梯次。")
 
-            # 格式化該次報名的梯次時間
-            start_str = slot.slot_start_time.strftime('%Y-%m-%d %H:%M') # 格式化開始時間
-            if slot.slot_start_time.date() == slot.slot_end_time.date():
-                end_str = slot.slot_end_time.strftime('%H:%M')
-            else:
-                end_str = slot.slot_end_time.strftime('%Y-%m-%d %H:%M')
-            
-            class_time = f"{start_str} ~ {end_str}"
+    batch = db.batch()
 
-            # 5. 組合回傳給前端的 JSON 資料
-            my_registrations_data.append({
-                'registration_id': reg.id,
-                'course_id': course.id,
-                'course_name': course.name,
-                'class_time': class_time,
-                'course_description': course.description,
-                'speaker_info': course.speaker_info,
-                'slot_start_time': slot.slot_start_time.isoformat(),
-                'status': registration_status, # 新增：課程狀態
-                'files': [
-                    {'id': f.id, 'url': url_for('download_file', file_id=f.id), 'name': f.display_filename} 
-                    for f in course.files
-                ]
-            })
-        except Exception as e:
-            # 如果處理某筆紀錄時發生任何未知錯誤，就在後台印出錯誤訊息，然後繼續處理下一筆
-            print(f"處理報名紀錄 ID {reg.id} 時發生錯誤: {e}")
+    for start_str, end_str, capacity_str in zip(slot_start_times, slot_end_times, slot_capacities):
+        if not all([start_str, end_str, capacity_str]):
             continue
 
-    return jsonify(my_registrations_data)
-# ---- END ----
+        try:
+            capacity = int(capacity_str)
+            if capacity <= 0:
+                raise ValueError("人數上限必須大於 0。")
 
-# [POST] 報名課程
+            # 將表單時間字串轉為 datetime（預設為台灣時間）
+            start_time = datetime.strptime(start_str, "%Y-%m-%dT%H:%M").replace(tzinfo=TAIWAN_TZ)
+            end_time = datetime.strptime(end_str, "%Y-%m-%dT%H:%M").replace(tzinfo=TAIWAN_TZ)
 
-@app.route('/api/register', methods=['POST'])
-@login_required
-def register_for_slot():
-    """
-    處理課程報名，支援兩種模式：
-    1. 固定梯次報名 (傳入 time_slot_id)
-    2. 使用者自選時間報名 (傳入 course_id 和 user_selected_time)
-    """
-    data = request.get_json()
-    slot_id = data.get('time_slot_id')
-    course_id = data.get('course_id')
-    user_selected_time_str = data.get('user_selected_time')
+            # 新增到 Firestore 子集合
+            slot_ref = course_ref.collection('time_slots').document()
+            batch.set(slot_ref, {
+                'slot_start_time': start_time,
+                'slot_end_time': end_time,
+                'capacity': capacity,
+                'booked_count': 0
+            })
+        except Exception as e:
+            raise ValueError(f"建立梯次時發生錯誤：{e}")
 
-    try:
-        if slot_id:
-            # --- 模式一：固定梯次報名 ---
-            slot = TimeSlot.query.get(slot_id)
-            if not slot:
-                return jsonify({'success': False, 'message': '找不到指定的梯次'}), 404
-            
-            course = slot.course
-            # ▼▼▼ 修改：接收驗證函式的回傳值 ▼▼▼
-            validation_error = _validate_registration(course, current_user)
-            if validation_error:
-                return jsonify({'success': False, 'message': validation_error}), 400
-
-            # 檢查時間衝突
-            conflicting_course_name = _check_time_conflict(current_user, slot.slot_start_time, slot.slot_end_time)
-            if conflicting_course_name:
-                error_message = f"報名失敗：此時段與您已報名的課程「{conflicting_course_name}」時間重疊。"
-                return jsonify({'success': False, 'message': error_message}), 400
-
-            if slot.booked_count >= slot.capacity:
-                return jsonify({'success': False, 'message': '此梯次名額已滿'}), 400
-
-            # 更新已報名人數
-            slot.booked_count += 1
-            target_slot_id = slot.id
-
-        elif course_id and user_selected_time_str:
-            # --- 模式二：使用者自選時間報名 ---
-            course = db.session.get(Course, course_id)
-            if not course or not course.allow_user_to_choose_time:
-                return jsonify({'success': False, 'message': '此課程不支援自選時間或不存在'}), 404
-
-            # 接收驗證函式的回傳值
-            validation_error = _validate_registration(course, current_user)
-            if validation_error:
-                return jsonify({'success': False, 'message': validation_error}), 400
-
-            user_time = datetime.strptime(user_selected_time_str, '%Y-%m-%dT%H:%M')
-            user_end_time = user_time + timedelta(hours=course.duration_hours)
-
-            # --- 新增：檢查是否與午休時間 (12:00-13:30) 重疊 ---
-            # "不包含12點" 和 "不包含1點半" 意味著任何與 (12:00, 13:30) 這個開區間重疊的預約都是無效的
-            lunch_break_start = datetime.combine(user_time.date(), time(12, 0))
-            lunch_break_end = datetime.combine(user_time.date(), time(13, 30))
-
-            # 檢查重疊條件：(課程開始時間 < 午休結束時間) AND (課程結束時間 > 午休開始時間)
-            if user_time < lunch_break_end and user_end_time > lunch_break_start:
-                error_message = "報名失敗：預約時段不可與中午休息時間 (12:00 ~ 13:30) 重疊。"
-                return jsonify({'success': False, 'message': error_message}), 400
-
-            # 檢查時間衝突，並傳入 course.id 以啟用 1.5 小時緩衝檢查
-            conflicting_course_name = _check_time_conflict(current_user, user_time, user_end_time, course_id_for_self_choice=course.id)
-            if conflicting_course_name:
-                error_message = f"報名失敗：您選擇的時段與其他人的預約時段過於接近（需間隔1.5小時），或與您已報名的其他課程時間重疊。"
-                return jsonify({'success': False, 'message': error_message}), 400
-
-            # --- 檢查該時段是否與此課程的其他預約時間重疊 ---
-            # 條件: (新時段的開始 < 已預約時段的結束) AND (新時段的結束 > 已預約時段的開始)
-            conflicting_slot = TimeSlot.query.filter(
-                TimeSlot.course_id == course.id,
-                TimeSlot.slot_start_time < user_end_time,
-                TimeSlot.slot_end_time > user_time
-            ).first()
-            if conflicting_slot:
-                return jsonify({'success': False, 'message': '您選擇的時段與其他人的預約時間重疊，請選擇其他時間。'}), 400
-
-            # --- 分別驗證日期和時間範圍 ---
-            user_selected_date = user_time.date()
-            user_selected_time_of_day = user_time.time()
-            is_date_valid = course.user_choice_start_date <= user_selected_date <= course.user_choice_end_date
-            is_time_valid = course.user_choice_start_time_of_day <= user_selected_time_of_day <= course.user_choice_end_time_of_day
-            # 確保兩者都有效
-            if not (is_date_valid and is_time_valid):
-                return jsonify({'success': False, 'message': '您選擇的時間不在允許的範圍內(中午休息時間不能選擇)'}), 400
-
-            # 為這次報名動態創建一個專屬的 TimeSlot，結束時間根據課程時數計算
-            new_slot = TimeSlot(
-                course_id=course.id,
-                slot_start_time=user_time,
-                slot_end_time=user_end_time, # 根據課程時數計算結束時間
-                capacity=1, # 這個梯次專屬於此使用者
-                booked_count=1 # 直接設為已滿
-            )
-            db.session.add(new_slot) # 新增到 session
-            db.session.flush() # 立即執行插入以獲取 new_slot.id
-            target_slot_id = new_slot.id
-
-        else:
-            return jsonify({'success': False, 'message': '報名資訊不完整'}), 400
-
-        # 建立報名紀錄
-        new_reg = Registration(user_id=current_user.id, time_slot_id=target_slot_id)
-        db.session.add(new_reg)
-        db.session.commit()
-
-        return jsonify({'success': True, 'message': '報名成功！'})
-
-    except (ValueError, TypeError) as e:
-        db.session.rollback()
-        return jsonify({'success': False, 'message': f'報名失敗: {e}'}), 400
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'success': False, 'message': f'伺服器發生未知錯誤: {e}'}), 500
-
-def _check_time_conflict(user, new_slot_start, new_slot_end, course_id_for_self_choice=None):
-    """
-    檢查新的時間區段是否與使用者已報名的課程時間重疊。
-    對於自選時間的課程，還會檢查與該課程其他已預約時段的衝突。
-
-    :param user: 目前登入的使用者物件
-    :param new_slot_start: 新報名課程的開始時間 (datetime object)
-    :param new_slot_end: 新報名課程的結束時間 (datetime object)
-    :param course_id_for_self_choice: 如果是自選時間模式，傳入課程 ID 以檢查同課程的其他預約
-    :return: 如果有衝突，返回衝突的課程名稱；否則返回 None。
-    """
-    # 定義課程之間的緩衝時間為 1.5 小時
-    buffer = timedelta(hours=1.5)
-
-    # 步驟 1: 檢查與使用者自己已報名的 *所有* 課程是否有時間衝突
-    # 查詢使用者所有已報名的紀錄
-    all_user_registrations = Registration.query.filter_by(user_id=user.id).join(TimeSlot).all()
-
-    for reg in all_user_registrations:
-        existing_start = reg.time_slot.slot_start_time
-        existing_end = reg.time_slot.slot_end_time
-        # 檢查時間重疊，不考慮緩衝
-        if new_slot_start < existing_end and new_slot_end > existing_start:
-            return reg.time_slot.course.name # 發現衝突，返回衝突的課程名稱
-
-    # 步驟 2: 如果是自選時間模式，檢查與該課程 *其他* 已被預約的時段是否有緩衝衝突
-    if course_id_for_self_choice:
-        # 找出該課程所有已被預約的時段 (capacity=1 代表是自選時段)
-        booked_slots = TimeSlot.query.filter_by(course_id=course_id_for_self_choice, capacity=1).all()
-        for slot in booked_slots:
-            # 檢查時間重疊，並考慮緩衝時間
-            # 條件：(新時段的開始) < (已預約時段的結束 + 緩衝) AND (新時段的結束 + 緩衝) > (已預約時段的開始)
-            if new_slot_start < (slot.slot_end_time + buffer) and (new_slot_end + buffer) > slot.slot_start_time:
-                return slot.course.name # 發現衝突
-            
-    return None # 沒有任何衝突
-
-def _validate_registration(course, user):
-    """報名前的統一驗證輔助函式"""
-    # 檢查課程是否仍在報名期間
-    if course.status != '報名中' or datetime.now() >= course.registration_end_time:
-        if course.status == '報名中':
-            course.status = '報名截止'
-            db.session.commit()
-        return '此課程報名已截止。'
-
-    # 檢查是否已經報名過此課程的任何梯次
-    existing_reg = Registration.query.join(TimeSlot).filter(
-        Registration.user_id == user.id,
-        TimeSlot.course_id == course.id
-    ).first()
-    if existing_reg:
-        raise ValueError('您已經報名過此課程。')  
-    
-    return None # 如果所有驗證都通過，返回 None
-
-# [DELETE] 使用者取消報名
-@app.route('/api/registrations/<int:registration_id>/cancel', methods=['POST'])
-@login_required
-def cancel_registration(registration_id):
-    # 1. 找到報名紀錄，並確保是目前登入的使用者所擁有的
-    reg = Registration.query.filter_by(id=registration_id, user_id=current_user.id).first()
-    if not reg:
-        return jsonify({'success': False, 'message': '找不到您的報名紀錄或無權限操作。'}), 404
-
-    slot = reg.time_slot
-    # 2. 檢查是否在可取消的期限內 (課程開始前 2 天)
-    if datetime.utcnow() > (slot.slot_start_time - timedelta(days=2)):
-        return jsonify({'success': False, 'message': '已超過取消期限，無法取消報名'}), 400
-
-    # 3. 執行取消邏輯
-    try:
-
-        # 先刪除報名紀錄本身
-        db.session.delete(reg)
-
-        # 接著判斷梯次類型並處理
-        if slot.capacity == 1:
-            # 如果是自選的單人梯次，則連同梯次一併刪除
-            db.session.delete(slot)
-        elif slot.booked_count > 0:
-            # 如果是固定梯次，則將已報名人數減 1
-            slot.booked_count -= 1
-
-        db.session.commit()
-        return jsonify({'success': True, 'message': '已成功取消報名。'})
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'success': False, 'message': f'處理取消時發生錯誤: {e}'}), 500
+    batch.commit()
 
 
-# --- 以下為後台管理 API ---
-
-# [POST] 新增課程
 @app.route('/api/admin/courses', methods=['POST'])
 @login_required
 @admin_required
 def create_course():
-    data = request.form
-    uploaded_files = request.files.getlist('files')
-    # 解析並驗證時間格式
     try:
-        start_time = datetime.strptime(data['registration_start_time'], '%Y-%m-%dT%H:%M')
-        end_time = datetime.strptime(data['registration_end_time'], '%Y-%m-%dT%H:%M')
-        now = datetime.now()
+        data = request.form
+        uploaded_files = request.files.getlist('files')
+        
+        # --- START: 【修正】即時判斷課程初始狀態 ---
+        start_time_naive = datetime.strptime(data['registration_start_time'], '%Y-%m-%dT%H:%M')
+        end_time_naive = datetime.strptime(data['registration_end_time'], '%Y-%m-%dT%H:%M')
+        start_time_aware = start_time_naive.replace(tzinfo=TAIWAN_TZ)
+        end_time_aware = end_time_naive.replace(tzinfo=TAIWAN_TZ)
+        now = datetime.now(TAIWAN_TZ)
 
-        # --- 處理自選時間的邏輯 ---
+        initial_status = "尚未開放"
+        if start_time_aware <= now < end_time_aware:
+            initial_status = "報名中"
+        elif now >= end_time_aware:
+            initial_status = "報名截止"
+        # --- END: 【修正】 ---
+
         allow_user_choice = 'allow_user_to_choose_time' in data
-        user_choice_start_date = datetime.strptime(data['user_choice_start_date'], '%Y-%m-%d').date() if allow_user_choice and data.get('user_choice_start_date') else None
-        user_choice_end_date = datetime.strptime(data['user_choice_end_date'], '%Y-%m-%d').date() if allow_user_choice and data.get('user_choice_end_date') else None
-        user_choice_start_time_of_day = datetime.strptime(data['user_choice_start_time_of_day'], '%H:%M').time() if allow_user_choice and data.get('user_choice_start_time_of_day') else None
-        user_choice_end_time_of_day = datetime.strptime(data['user_choice_end_time_of_day'], '%H:%M').time() if allow_user_choice and data.get('user_choice_end_time_of_day') else None
-
-        if now < start_time:
-            calculated_status = '尚未開放'
-        elif start_time <= now < end_time:
-            calculated_status = '報名中'
-        else:
-            calculated_status = '報名截止'
-            
-        new_course = Course(
-            name=data['name'],
-            description=data['description'],
-            speaker_info=data['speaker_info'],
-            duration_hours=float(data.get('duration_hours', 1)),
-            status=calculated_status,
-            registration_start_time=start_time,
-            registration_end_time=end_time,
-            has_time_slots=not allow_user_choice,
-            allow_user_to_choose_time=allow_user_choice,
-            user_choice_start_date=user_choice_start_date,
-            user_choice_end_date=user_choice_end_date,
-            user_choice_start_time_of_day=user_choice_start_time_of_day,
-            user_choice_end_time_of_day=user_choice_end_time_of_day
-        )
-
-        # 呼叫輔助函式來處理梯次和檔案
+        course_data = {
+            "name": data['name'], "description": data['description'], "speaker_info": data.get('speaker_info'),
+            "status": initial_status, # 使用計算出的初始狀態
+            "registration_start_time": start_time_aware, "registration_end_time": end_time_aware,
+            "files": [],
+            "allow_user_to_choose_time": allow_user_choice,
+            "has_time_slots": not allow_user_choice,
+            "user_choice_start_date": datetime.combine(
+                datetime.strptime(data['user_choice_start_date'], '%Y-%m-%d').date(),
+                time.min
+            ).replace(tzinfo=TAIWAN_TZ) if allow_user_choice and data.get('user_choice_start_date') else None,
+            "user_choice_end_date": datetime.combine(
+                datetime.strptime(data['user_choice_end_date'], '%Y-%m-%d').date(),
+                time.min
+            ).replace(tzinfo=TAIWAN_TZ) if allow_user_choice and data.get('user_choice_end_date') else None,
+            "user_choice_start_time_of_day": data.get('user_choice_start_time_of_day') if allow_user_choice and data.get('user_choice_start_time_of_day') else None,
+            "user_choice_end_time_of_day": data.get('user_choice_end_time_of_day') if allow_user_choice and data.get('user_choice_end_time_of_day') else None,
+        }
+        course_ref = db.collection('courses').document()
+        course_id = course_ref.id
+        if uploaded_files:
+            files_metadata = _handle_file_uploads_storage(uploaded_files, course_id)
+            course_data['files'] = files_metadata
+        course_ref.set(course_data)
         if not allow_user_choice:
-            _handle_time_slots(data, new_course)
-
-        _handle_file_uploads(uploaded_files, new_course)
-        
-        db.session.add(new_course)
-        db.session.commit()
-        
+            _handle_time_slots_firestore(data, course_ref)
         flash('課程新增成功！', 'success')
         return redirect(url_for('admin_dashboard'))
+    except Exception as e:
+        flash(f'新增課程時發生錯誤: {e}', 'danger')
+        # --- START: 【修正】錯誤時重新渲染並保留資料 ---
+        form_data = request.form.to_dict()
+        # 將時間字串轉換回 datetime 物件，以便樣板能正確渲染
+        if form_data.get('registration_start_time'):
+            form_data['registration_start_time'] = datetime.strptime(form_data['registration_start_time'], '%Y-%m-%dT%H:%M')
+        if form_data.get('registration_end_time'):
+            form_data['registration_end_time'] = datetime.strptime(form_data['registration_end_time'], '%Y-%m-%dT%H:%M')
+        # date 和 time 欄位維持字串即可，因為 input type="date/time" 接受字串 value
+            
+        time_slots = []
+        slot_starts = request.form.getlist('slot_start_times')
+        slot_ends = request.form.getlist('slot_end_times')
+        slot_caps = request.form.getlist('slot_capacities')
+        for i in range(len(slot_starts)):
+            time_slots.append({
+                "slot_start_time": slot_starts[i],
+                "slot_end_time": slot_ends[i],
+                "capacity": slot_caps[i]
+            })
+        form_data['time_slots'] = time_slots
+        course_from_form = SimpleNamespace(**form_data)
+        return render_template('admin_course_form.html', course=course_from_form), 400
+        # --- END: 【修正】 ---
 
-    except ValueError as e:
-        flash(str(e), 'danger')
-        return redirect(url_for('new_course'))
-
-# [POST] 更新課程
-@app.route('/api/admin/courses/<int:course_id>', methods=['POST'])
+@app.route('/api/admin/courses/<string:course_id>', methods=['POST'])
 @login_required
 @admin_required
 def update_course(course_id):
-    course = Course.query.get_or_404(course_id)
-    data = request.form
-    uploaded_files = request.files.getlist('files')
-
+    course_ref = db.collection('courses').document(course_id)
     try:
-        start_time = datetime.strptime(data['registration_start_time'], '%Y-%m-%dT%H:%M')
-        end_time = datetime.strptime(data['registration_end_time'], '%Y-%m-%dT%H:%M')
-        now = datetime.now()
-
-        # --- 處理自選時間的邏輯 ---
+        data = request.form
+        uploaded_files = request.files.getlist('files')
+        start_time_naive = datetime.strptime(data['registration_start_time'], '%Y-%m-%dT%H:%M')
+        end_time_naive = datetime.strptime(data['registration_end_time'], '%Y-%m-%dT%H:%M')
         allow_user_choice = 'allow_user_to_choose_time' in data
-        user_choice_start_date = datetime.strptime(data['user_choice_start_date'], '%Y-%m-%d').date() if allow_user_choice and data.get('user_choice_start_date') else None
-        user_choice_end_date = datetime.strptime(data['user_choice_end_date'], '%Y-%m-%d').date() if allow_user_choice and data.get('user_choice_end_date') else None
-        user_choice_start_time_of_day = datetime.strptime(data['user_choice_start_time_of_day'], '%H:%M').time() if allow_user_choice and data.get('user_choice_start_time_of_day') else None
-        user_choice_end_time_of_day = datetime.strptime(data['user_choice_end_time_of_day'], '%H:%M').time() if allow_user_choice and data.get('user_choice_end_time_of_day') else None
-
-        if now < start_time:
-            calculated_status = '尚未開放'
-        elif start_time <= now < end_time:
-            calculated_status = '報名中'
-        else:
-            calculated_status = '報名截止'
-
-        # 更新課程基本資料
-        course.name = data['name']
-        course.description = data['description']
-        course.speaker_info = data['speaker_info']
-        course.duration_hours = float(data.get('duration_hours', 1))
-        course.status = calculated_status
-        course.registration_start_time = start_time
-        course.registration_end_time = end_time
-        course.has_time_slots = not allow_user_choice
-        course.allow_user_to_choose_time = allow_user_choice
-        course.user_choice_start_date = user_choice_start_date
-        course.user_choice_end_date = user_choice_end_date
-        course.user_choice_start_time_of_day = user_choice_start_time_of_day
-        course.user_choice_end_time_of_day = user_choice_end_time_of_day
-
-        # 清除舊梯次並呼叫輔助函式重建
-        TimeSlot.query.filter_by(course_id=course.id).delete()
-        # 只有在未啟用自選時間時，才處理固定梯次
+        update_data = {
+            "name": data['name'], "description": data['description'], "speaker_info": data.get('speaker_info'),
+            "registration_start_time": start_time_naive.replace(tzinfo=TAIWAN_TZ), "registration_end_time": end_time_naive.replace(tzinfo=TAIWAN_TZ),
+            "allow_user_to_choose_time": allow_user_choice, "has_time_slots": not allow_user_choice,
+            "user_choice_start_date": datetime.strptime(data['user_choice_start_date'], '%Y-%m-%d').date() if allow_user_choice and data.get('user_choice_start_date') else None,
+            "user_choice_end_date": datetime.strptime(data['user_choice_end_date'], '%Y-%m-%d').date() if allow_user_choice and data.get('user_choice_end_date') else None,
+            "user_choice_start_time_of_day": data.get('user_choice_start_time_of_day') if allow_user_choice and data.get('user_choice_start_time_of_day') else None,
+            "user_choice_end_time_of_day": data.get('user_choice_end_time_of_day') if allow_user_choice and data.get('user_choice_end_time_of_day') else None,
+        }
+        if uploaded_files:
+            files_metadata = _handle_file_uploads_storage(uploaded_files, course_id)
+            update_data['files'] = firestore.ArrayUnion(files_metadata)
+        course_ref.update(update_data)
+        old_slots_ref = course_ref.collection('time_slots')
+        delete_collection(old_slots_ref, 50)
         if not allow_user_choice:
-            _handle_time_slots(data, course)
-
-        # 呼叫輔助函式處理新上傳的檔案
-        _handle_file_uploads(uploaded_files, course)
-
-        db.session.commit()
-        
+            _handle_time_slots_firestore(data, course_ref)
         flash('課程更新成功！', 'success')
         return redirect(url_for('admin_dashboard'))
-
-    except ValueError as e:
-        flash(str(e), 'danger')
-        return redirect(url_for('edit_course', course_id=course.id))
-
-# ---- START: 新增的輔助函式 ----
-def _handle_time_slots(data, course_object):
-    """輔助函式：處理課程梯次的建立"""
-    # 只有在 'allow_user_to_choose_time' 未勾選時，這些欄位才可能存在且需要處理
-    slot_start_times = data.getlist('slot_start_times') 
-    slot_end_times = data.getlist('slot_end_times') 
-    slot_capacities = data.getlist('slot_capacities') 
-
-    # 如果沒有提交任何梯次資料，且是固定梯次模式，則報錯
-    if not slot_start_times:
-        raise ValueError("請至少設定一個上課時間梯次。")
-
-    for start_str, end_str, capacity_str in zip(slot_start_times, slot_end_times, slot_capacities):
-        if not start_str or not end_str or not capacity_str:
-            continue
-        
-        try:
-            capacity = int(capacity_str)
-            if capacity <= 0:
-                raise ValueError("人數上限必須是正整數")
-            
-            start_time = datetime.strptime(start_str, '%Y-%m-%dT%H:%M')
-            end_time = datetime.strptime(end_str, '%Y-%m-%dT%H:%M')
-
-            # 驗證：結束時間必須晚於開始時間
-            if end_time <= start_time:
-                raise ValueError("結束時間必須晚於開始時間")
-
-            new_slot = TimeSlot(
-                slot_start_time=start_time,
-                slot_end_time=end_time,
-                capacity=capacity
-            )
-            course_object.time_slots.append(new_slot)
-        except (ValueError, TypeError) as e:
-            raise ValueError(f"梯次資料格式錯誤: '{start_str}' -> '{end_str}' ({e})")
-
-# 輔助函式：處理檔案上傳
-def _handle_file_uploads(files, course_object):
-    for file in files:
-        if file and file.filename != '':
-            original_filename = file.filename
-            
-            # (舊的錯誤程式碼已被移除)
-            # safe_display_name = secure_filename(original_filename) 
-
-            _, ext = os.path.splitext(original_filename)
-            stored_filename = f"{uuid.uuid4().hex}{ext}"
-            
-            file.save(os.path.join(app.config['UPLOAD_FOLDER'], stored_filename))
-            
-            new_file = CourseFile(
-                file_path=stored_filename,
-                display_filename=original_filename, 
-                course=course_object
-            )
-            db.session.add(new_file)
-
-# [DELETE] 刪除課程
-@app.route('/api/admin/courses/<int:course_id>', methods=['DELETE'])
-@login_required
-@admin_required
-def delete_course(course_id): # 刪除課程 函式
-    course = Course.query.get_or_404(course_id)
-    db.session.delete(course)
-    db.session.commit()
-    return jsonify({'success': True, 'message': '課程已刪除'})
-
-# [GET] 取得單一課程的報名者列表
-@app.route('/api/admin/courses/<int:course_id>/registrations', methods=['GET'])
-@login_required
-@admin_required
-def get_registrations(course_id):# 取得單一課程的報名者列表 函式
-    registrations = Registration.query.join(TimeSlot).filter(TimeSlot.course_id == course_id).order_by(TimeSlot.slot_start_time, Registration.registration_time).all()
-    
-    users_data = []
-    for reg in registrations:
-        # 格式化梯次的起迄時間
-        slot_start = reg.time_slot.slot_start_time
-        slot_end = reg.time_slot.slot_end_time
-        
-        # 檢查是否為同一天
-        if slot_start.date() == slot_end.date():
-            slot_display = f"{slot_start.strftime('%Y-%m-%d %H:%M')} ~ {slot_end.strftime('%H:%M')}"
-        else:
-            slot_display = f"{slot_start.strftime('%Y-%m-%d %H:%M')} ~ {slot_end.strftime('%Y-%m-%d %H:%M')}"
-
-        users_data.append({
-            'username': reg.user.username,
-            'registration_time': reg.local_registration_time().strftime('%Y-%m-%d %H:%M'),
-            'slot_time': slot_display # <-- 確保這個鍵名是 slot_time
-        })
-        
-    return jsonify(users_data)
-
-# [DELETE] 刪除指定的課程檔案
-@app.route('/api/admin/files/<int:file_id>', methods=['DELETE'])
-@login_required
-@admin_required
-# 刪除指定的課程檔案 函式
-def delete_course_file(file_id):
-    
-    #API: 刪除指定的課程檔案
-    # 1. 從資料庫中找到檔案紀錄
-    file_to_delete = CourseFile.query.get_or_404(file_id)
-    
-    # 2. 取得檔案在伺服器上的實際路徑
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file_to_delete.file_path)
-    
-    try:
-        # 3. 從資料庫刪除紀錄
-        db.session.delete(file_to_delete)
-        
-        # 4. 從伺服器刪除實體檔案
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            
-        # 5. 提交變更
-        db.session.commit()
-        
-        return jsonify({'success': True, 'message': '檔案已成功刪除'})
-    # 6. 錯誤處理
     except Exception as e:
-        db.session.rollback()
-        print(f"刪除檔案時發生錯誤: {e}")
-        return jsonify({'success': False, 'message': '刪除檔案時發生錯誤'}), 500
+        flash(f'更新課程時發生錯誤: {e}', 'danger')
+        # --- START: 【修正】錯誤時重新渲染並保留資料 ---
+        course_data_from_db = course_ref.get().to_dict()
+        form_data = request.form.to_dict()
+        course_data_from_db.update(form_data)
+        
+        # 將時間字串轉換回 datetime 物件
+        if course_data_from_db.get('registration_start_time') and isinstance(course_data_from_db['registration_start_time'], str):
+            course_data_from_db['registration_start_time'] = datetime.strptime(course_data_from_db['registration_start_time'], '%Y-%m-%dT%H:%M')
+        if course_data_from_db.get('registration_end_time') and isinstance(course_data_from_db['registration_end_time'], str):
+            course_data_from_db['registration_end_time'] = datetime.strptime(course_data_from_db['registration_end_time'], '%Y-%m-%dT%H:%M')
+        # ... 對其他時間欄位做同樣的處理 ...
+            
+        time_slots = []
+        slot_starts = request.form.getlist('slot_start_times')
+        slot_ends = request.form.getlist('slot_end_times')
+        slot_caps = request.form.getlist('slot_capacities')
+        for i in range(len(slot_starts)):
+            time_slots.append({
+                "slot_start_time": slot_starts[i],
+                "slot_end_time": slot_ends[i],
+                "capacity": slot_caps[i]
+            })
+        course_data_from_db['time_slots'] = time_slots
+        course_from_form = SimpleNamespace(**course_data_from_db)
+        course_from_form.id = course_id
+        return render_template('admin_course_form.html', course=course_from_form), 400
+        # --- END: 【修正】 ---
 
-# [POST] 管理者取消報名
-@app.route('/api/admin/registrations/<int:registration_id>/cancel', methods=['POST'])
+def delete_collection(coll_ref, batch_size):
+    docs = coll_ref.limit(batch_size).stream()
+    deleted = 0
+    for doc in docs:
+        print(f"正在刪除文件: {doc.id}")
+        doc.reference.delete()
+        deleted += 1
+    if deleted >= batch_size:
+        return delete_collection(coll_ref, batch_size)
+
+@app.route('/api/admin/courses/<string:course_id>', methods=['DELETE'])
+@login_required
+@admin_required
+def delete_course(course_id):
+    try:
+        course_ref = db.collection('courses').document(course_id)
+        course_doc = course_ref.get()
+        if not course_doc.exists:
+            return jsonify({'success': False, 'message': '找不到要刪除的課程'}), 404
+        course_data = course_doc.to_dict()
+        if 'files' in course_data and course_data['files']:
+            for file_info in course_data['files']:
+                if 'storage_path' in file_info:
+                    blob = bucket.blob(file_info['storage_path'])
+                    if blob.exists():
+                        blob.delete()
+                        print(f"已刪除 Storage 檔案: {file_info['storage_path']}")
+        slots_ref = course_ref.collection('time_slots')
+        delete_collection(slots_ref, 50)
+        regs_query = db.collection('registrations').where(filter=firestore.FieldFilter('course_id', '==', course_id)).stream()
+        batch = db.batch()
+        for reg_doc in regs_query:
+            batch.delete(reg_doc.reference)
+        batch.commit()
+        print(f"已刪除與課程 {course_id} 相關的報名紀錄")
+        course_ref.delete()
+        print(f"已刪除課程文件: {course_id}")
+        return jsonify({'success': True, 'message': '課程已成功刪除'})
+    except Exception as e:
+        print(f"刪除課程時發生錯誤: {e}")
+        return jsonify({'success': False, 'message': f'刪除課程時發生伺服器錯誤: {e}'}), 500
+
+@app.route('/api/admin/courses/<string:course_id>/registrations', methods=['GET'])
+@login_required
+@admin_required
+def get_registrations(course_id):
+    try:
+        regs_query = db.collection('registrations').where(filter=firestore.FieldFilter('course_id', '==', course_id)).order_by('registration_time').stream()
+        users_data = []
+        for reg_doc in regs_query:
+            reg = reg_doc.to_dict()
+            user_doc = db.collection('users').document(reg['user_id']).get()
+            username = user_doc.to_dict().get('username') if user_doc.exists else '未知用戶'
+            slot_time_display = "自選時間或資料錯誤"
+            if reg.get('time_slot_id'):
+                slot_doc = db.collection('courses').document(course_id).collection('time_slots').document(reg['time_slot_id']).get()
+                if slot_doc.exists:
+                    slot = slot_doc.to_dict()
+                    start_str = to_taiwan_time_str(slot.get('slot_start_time'), '%Y-%m-%d %H:%M')
+                    end_str = to_taiwan_time_str(slot.get('slot_end_time'), '%H:%M')
+                    slot_time_display = f"{start_str} ~ {end_str}"
+            users_data.append({'username': username, 'registration_time': to_taiwan_time_str(reg.get('registration_time'), '%Y-%m-%d %H:%M'), 'slot_time': slot_time_display})
+        return jsonify(users_data)
+    except Exception as e:
+        print(f"獲取報名列表時發生錯誤: {e}")
+        return jsonify({'error': f'伺服器錯誤: {e}'}), 500
+
+@app.route('/api/admin/courses/<string:course_id>/files/delete', methods=['POST'])
+@login_required
+@admin_required
+def delete_course_file(course_id):
+    try:
+        data = request.get_json()
+        storage_path_to_delete = data.get('storage_path')
+        file_to_remove = data.get('file_object')
+        if not storage_path_to_delete or not file_to_remove:
+            return jsonify({'success': False, 'message': '請求資訊不完整'}), 400
+        blob = bucket.blob(storage_path_to_delete)
+        if blob.exists():
+            blob.delete()
+        course_ref = db.collection('courses').document(course_id)
+        course_ref.update({'files': firestore.ArrayRemove([file_to_remove])})
+        return jsonify({'success': True, 'message': '檔案已刪除'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'刪除檔案時發生錯誤: {e}'}), 500
+
+
+# --- START: 【修正】補全 admin_cancel_registration 路由 ---
+@app.route('/api/admin/registrations/<string:registration_id>/cancel', methods=['POST'])
 @login_required
 @admin_required
 def admin_cancel_registration(registration_id):
-    reg = db.session.get(Registration, registration_id)
-    if not reg:
-        flash('找不到指定的報名紀錄。', 'danger')
-        return redirect(url_for('all_registrations', **request.args))
-
     try:
-        slot = reg.time_slot
+        reg_ref = db.collection('registrations').document(registration_id)
+        reg_doc = reg_ref.get()
+
+        if not reg_doc.exists:
+            flash('找不到指定的報名紀錄。', 'danger')
+            return redirect(url_for('all_registrations', **request.args))
+
+        reg_data = reg_doc.to_dict()
+        course_id = reg_data.get('course_id')
+        slot_id = reg_data.get('time_slot_id')
+
+        if course_id and slot_id:
+            # --- START: 【修正】在交易前判斷梯次類型 ---
+            slot_ref = db.collection('courses').document(course_id).collection('time_slots').document(slot_id)
+            slot_doc = slot_ref.get()
+            is_user_choice = False
+            if slot_doc.exists:
+                is_user_choice = slot_doc.to_dict().get('is_user_choice', False)
+            
+            transaction = db.transaction()
+            cancel_in_transaction(transaction, reg_ref, slot_ref, is_user_choice_slot=is_user_choice)
+            # --- END: 【修正】 ---
+        else:
+            reg_ref.delete()
         
-        # 先刪除報名紀錄
-        db.session.delete(reg)
-        
-        # 判斷梯次類型並處理
-        if slot.capacity == 1:
-            # 自選的單人梯次，一併刪除
-            db.session.delete(slot)
-        elif slot.booked_count > 0:
-            # 固定梯次，人數減 1
-            slot.booked_count -= 1
-        
-        db.session.commit()
         flash('已成功取消該筆報名。', 'success')
     except Exception as e:
-        db.session.rollback()
+        print(f"管理員取消報名時發生錯誤: {e}")
         flash(f'處理取消時發生錯誤: {e}', 'danger')
     
     return redirect(url_for('all_registrations', **request.args))
+# --- END ---
 
 
 # --- 主程式進入點 & 初始化 ---
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all() # 建立所有資料表
-        # 檢查是否已有 admin 使用者，若無則建立一個
-        if not User.query.filter_by(username='admin').first():
-            print("建立預設管理者帳號...")
-            admin_user = User(username='admin', is_admin=True)
-            admin_user.set_password('Futsu_Admin') # 預設密碼
-            db.session.add(admin_user)
-            db.session.commit()
-            print("管理者帳號: admin, 密碼: Futsu_Admin")
+    # 檢查是否已有 admin 使用者，若無則建立一個
+    admin_query = db.collection('users').where(filter=firestore.FieldFilter('username', '==', 'admin')).limit(1).stream()
+    if not any(admin_query):
+        print("建立預設管理者帳號...")
+        password_hash = generate_password_hash('Futsu_Admin')
+        admin_data = {
+            'username': 'admin',
+            'is_admin': True,
+            'password_hash': password_hash
+        }
+        db.collection('users').add(admin_data)
+        print("管理者帳號: admin, 密碼: Futsu_Admin")
 
-        # 在啟動前手動執行一次狀態檢查
-        print("[Startup] 正在執行首次課程狀態檢查...")
-        check_course_status()
-        print("[Startup] 首次檢查完成。")
+    print("[Startup] 正在執行首次課程狀態檢查...")
+    check_course_status()
+    print("[Startup] 首次檢查完成。")
 
-    app.run(debug=True) # debug=True 會在程式碼變動時自動重啟
+
+
+    app.run(debug=True, host='0.0.0.0', port=5003)

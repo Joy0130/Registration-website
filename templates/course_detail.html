@@ -74,18 +74,25 @@
         {% elif course.allow_user_to_choose_time %}
             {# --- 情況二：顯示讓使用者自選時間的介面 --- #}
             <h3 class="mt-4">選擇您的上課時間</h3>
-            <div class="mb-3"> 
-                <div class="form-text text-success fs-6">
-                    可選範圍: {{ user_choice_start_datetime.strftime('%Y-%m-%d %H:%M') if user_choice_start_datetime }} 至 {{ user_choice_end_datetime.strftime('%Y-%m-%d %H:%M') if user_choice_end_datetime }}
-                </div>
-
+            <div class="mb-3">
+                {# --- START: 【修正】顯示可選範圍 --- #}
+                {% if user_choice_start_datetime and user_choice_end_datetime %}
+                    <div id="user-choice-info"
+                         data-start-time="{{ user_choice_start_datetime.isoformat() }}"
+                         data-end-time="{{ user_choice_end_datetime.isoformat() }}"
+                         class="alert alert-info">
+                        <i class="bi bi-info-circle-fill"></i>
+                        本課程可於 <strong>{{ user_choice_start_datetime.strftime('%Y-%m-%d %H:%M') }}</strong> 至 <strong>{{ user_choice_end_datetime.strftime('%Y-%m-%d %H:%M') }}</strong> 之間自由選擇上課時段。
+                    </div>
+                {% endif %}
+                {# --- END: 【修正】 --- #}
                 <label for="user_selected_time" class="form-label">請選擇上課日期及開始上課時間：</label>
                 <input type="datetime-local" id="user_selected_time" name="user_selected_time" class="form-control"
                        step="1800" 
                        data-booked-slots='{{ booked_slots_iso|tojson|safe }}'
+                       {# --- 【修正】確保 min/max 屬性有值 --- #}
                        min="{{ user_choice_start_datetime.strftime('%Y-%m-%dT%H:%M') if user_choice_start_datetime else '' }}"
                        max="{{ user_choice_end_datetime.strftime('%Y-%m-%dT%H:%M') if user_choice_end_datetime else '' }}" required>
-
             </div>
             <div class="d-grid gap-2 mt-3">
                 {% if booked_user_choice_slots %}
@@ -94,13 +101,15 @@
                     <ul class="list-unstyled mb-0">
                         {% for slot in booked_user_choice_slots %}
                         <li>
-                            <i class="bi bi-calendar-x"></i> 
+                            <i class="bi bi-calendar-x text-danger"></i> 
                             {{ slot.slot_start_time.strftime('%Y-%m-%d %H:%M') }} ~ 
+                            {# --- 【修正】優化跨日顯示 --- #}
                             {% if slot.slot_start_time.date() == slot.slot_end_time.date() %}
                                 {{ slot.slot_end_time.strftime('%H:%M') }}
                             {% else %}
                                 {{ slot.slot_end_time.strftime('%Y-%m-%d %H:%M') }}
                             {% endif %}
+                            {# --- END --- #}
                         </li>
                         {% endfor %}
                     </ul>

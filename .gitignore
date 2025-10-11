@@ -1,2 +1,6 @@
 .venv/
 .vscode/
+serviceAccountKey.json
+node_modules
+package-lock.json
+package.json
