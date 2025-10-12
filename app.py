@@ -15,9 +15,9 @@ import openpyxl
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or 'a_default_secret_key'  # 可從環境變數取得，若無則使用預設值 (開發時可用)
 #app.config['SECRET_KEY'] = 'a_very_secret_key_that_should_be_changed' # 測試用
-#app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db' #符合Railway寫法
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db' #符合Railway寫法
 
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////data/database.db'
+#app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////data/database.db'
 
 # app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///../instance/database.db' # SQLite 資料庫路徑
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False # 關閉不必要的追蹤功能以節省資源
