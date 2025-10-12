@@ -51,6 +51,107 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 3000); // 3seconds
         });
 
+    // ---- START: 自動計算結束時間的功能 ----
+    // 計算結束時間的函式
+    function calculateEndTime(startInput, endInput) {
+        // 每次都重新取得 duration_hours 輸入框，確保能抓到最新的值
+        const durationInput = document.getElementById('duration_hours');
+        const startTime = startInput.value;
+        const duration = durationInput ? parseFloat(durationInput.value) : null;
+        
+        console.log('計算結束時間:', { startTime, duration }); // 除錯用
+        
+        if (startTime && duration && duration > 0) {
+            const startDate = new Date(startTime);
+            // 將時數轉換為毫秒 (小時 * 60分鐘 * 60秒 * 1000毫秒)
+            const durationMs = duration * 60 * 60 * 1000;
+            const endDate = new Date(startDate.getTime() + durationMs);
+            
+            // 格式化為 datetime-local 所需的格式 "YYYY-MM-DDTHH:mm"
+            const year = endDate.getFullYear();
+            const month = String(endDate.getMonth() + 1).padStart(2, '0');
+            const day = String(endDate.getDate()).padStart(2, '0');
+            const hours = String(endDate.getHours()).padStart(2, '0');
+            const minutes = String(endDate.getMinutes()).padStart(2, '0');
+            
+            endInput.value = `${year}-${month}-${day}T${hours}:${minutes}`;
+            endInput.readOnly = true; // 設為唯讀
+            endInput.style.backgroundColor = '#e9ecef'; // 視覺提示
+            endInput.style.cursor = 'not-allowed'; // 滑鼠游標提示
+            
+            console.log('結束時間已設定:', endInput.value); // 除錯用
+        } else {
+            // 如果條件不符，解除唯讀狀態
+            endInput.readOnly = false;
+            endInput.style.backgroundColor = '';
+            endInput.style.cursor = '';
+        }
+    }
+    
+    // 為梯次輸入框綁定事件的函式
+    function bindAutoCalcEvents(row) {
+        const startInput = row.querySelector('input[name="slot_start_times"]');
+        const endInput = row.querySelector('input[name="slot_end_times"]');
+        
+        if (startInput && endInput) {
+            console.log('綁定事件到梯次列'); // 除錯用
+            
+            // 當開始時間改變時，自動計算結束時間
+            startInput.addEventListener('change', function() {
+                console.log('開始時間改變:', this.value); // 除錯用
+                const correspondingEndInput = this.closest('.time-slot-row').querySelector('input[name="slot_end_times"]');
+                calculateEndTime(this, correspondingEndInput);
+            });
+            
+            // 也監聽 input 事件（即時反應）
+            startInput.addEventListener('input', function() {
+                const correspondingEndInput = this.closest('.time-slot-row').querySelector('input[name="slot_end_times"]');
+                calculateEndTime(this, correspondingEndInput);
+            });
+            
+            // 頁面載入時，如果已有值，也計算一次
+            const durationInput = document.getElementById('duration_hours');
+            if (startInput.value && durationInput && durationInput.value) {
+                calculateEndTime(startInput, endInput);
+            }
+        }
+    }
+    
+    // 監聽上課時數的改變，重新計算所有梯次的結束時間
+    const durationInputGlobal = document.getElementById('duration_hours');
+    if (durationInputGlobal && slotsContainer) {
+        durationInputGlobal.addEventListener('change', function() {
+            console.log('上課時數改變:', this.value); // 除錯用
+            const allRows = slotsContainer.querySelectorAll('.time-slot-row');
+            allRows.forEach(row => {
+                const startInput = row.querySelector('input[name="slot_start_times"]');
+                const endInput = row.querySelector('input[name="slot_end_times"]');
+                if (startInput && endInput && startInput.value) {
+                    calculateEndTime(startInput, endInput);
+                }
+            });
+        });
+        
+        durationInputGlobal.addEventListener('input', function() {
+            const allRows = slotsContainer.querySelectorAll('.time-slot-row');
+            allRows.forEach(row => {
+                const startInput = row.querySelector('input[name="slot_start_times"]');
+                const endInput = row.querySelector('input[name="slot_end_times"]');
+                if (startInput && endInput && startInput.value) {
+                    calculateEndTime(startInput, endInput);
+                }
+            });
+        });
+    }
+    
+    // 為所有現有的梯次列綁定事件
+    if (slotsContainer) {
+        const existingRows = slotsContainer.querySelectorAll('.time-slot-row');
+        console.log('找到現有梯次列數量:', existingRows.length); // 除錯用
+        existingRows.forEach(row => bindAutoCalcEvents(row));
+    }
+    // ---- END: 自動計算結束時間的功能 ----
+
     // 檢查頁面上是否存在這些元素
     if (timeSlotsSection && addSlotBtn && slotsContainer && slotTemplate) {
         // 點擊「新增梯次」按鈕的邏輯
@@ -63,13 +164,16 @@ document.addEventListener('DOMContentLoaded', function() {
             // 找到新建立的這一列中的所有 input 和 button 欄位
             const controls = newRowElement.querySelectorAll('input, button');
 
-            // 移除它們的 disabled 屬性，將它們“喚醒”
+            // 移除它們的 disabled 屬性，將它們"喚醒"
             controls.forEach(control => {
                 control.disabled = false;
             });
 
             // 將處理好的新列加到容器中
             slotsContainer.appendChild(newRowElement);
+            
+            // ---- 為新增的梯次綁定自動計算事件 ----
+            bindAutoCalcEvents(newRowElement);
         });
 
         // 點擊「移除」按鈕的邏輯 (使用事件委派)
@@ -246,10 +350,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 let classTimeDisplayHTML = '';
                 if (course.allow_user_to_choose_time) {
                     // 如果是自選時間模式
-                    classTimeDisplayHTML = `<h6 class="card-subtitle mb-2 text-primary fw-bold"><i class="bi bi-calendar-check"></i> 上課時間: 自行選擇</h6>`;
+                    classTimeDisplayHTML = `<h6 class="card-subtitle mb-3 text-primary fw-bold"><i class="bi bi-calendar-check"></i> 上課時間: 自行選擇</h6>`;
                 } else {
                     // 如果是固定梯次模式
-                    classTimeDisplayHTML = `<h6 class="card-subtitle mb-2 text-muted">上課時間: ${course.class_time_summary}</h6>`;
+                    classTimeDisplayHTML = `<h6 class="card-subtitle mb-3 text-muted">上課時間: ${course.class_time_summary}</h6>`;
                 }
 
                 // 建立課程卡片
@@ -261,7 +365,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <a href="/course/${course.id}" class="text-decoration-none text-dark stretched-link">${course.name}</a>
                                 ${statusBadge}
                             </h5>
-                            <h6 class="card-subtitle mb-3 text-primary fw-bold">上課時間: ${course.class_time_summary}</h6>
+                            ${classTimeDisplayHTML}
                             
                             <h6 class="card-subtitle mb-2 text-muted">講者: ${course.speaker_info}</h6>
                             <p class="card-text flex-grow-1">${course.description.substring(0, 80)}...</p>
@@ -509,7 +613,7 @@ if (adminCourseListPage) {
             // 這樣可以正確處理使用者重新選擇檔案（而不是追加）的情況
             const newFiles = newCourseFileInput.files;
             fileStore = new DataTransfer(); // 清空舊的
-            Array.from(newFiles).forEach(file => fileStore.add(file)); // 加入新的檔案
+            Array.from(newFiles).forEach(file => fileStore.items.add(file)); // 加入新的檔案
             // 更新 input 的檔案列表
             newCourseFileInput.files = fileStore.files;
             renderNewFiles(); // 重新渲染列表
@@ -563,6 +667,32 @@ if (adminCourseListPage) {
             }
         }
     });
+
+    // ---- START: 修正所有報名紀錄頁面的課程下拉選單重複問題 ----
+    const courseSelect = document.getElementById('course_id');
+    if (courseSelect) {
+        // 收集所有選項
+        const options = Array.from(courseSelect.options);
+        const seenCourseIds = new Set();
+        const uniqueOptions = [];
+
+        options.forEach(option => {
+            const courseId = option.value;
+            // 保留空值選項（"所有課程"）或未見過的課程 ID
+            if (courseId === '' || !seenCourseIds.has(courseId)) {
+                seenCourseIds.add(courseId);
+                uniqueOptions.push(option);
+            }
+        });
+
+        // 清空下拉選單
+        courseSelect.innerHTML = '';
+        // 重新加入去重後的選項
+        uniqueOptions.forEach(option => {
+            courseSelect.appendChild(option);
+        });
+    }
+    // ---- END: 修正所有報名紀錄頁面的課程下拉選單重複問題 ----
 });
 
 // --- 全域可呼叫的函式 (因為 onclick 屬性需要它們在全域範疇) ---
