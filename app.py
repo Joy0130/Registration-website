@@ -15,7 +15,11 @@ import openpyxl
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or 'a_default_secret_key'  # 可從環境變數取得，若無則使用預設值 (開發時可用)
 #app.config['SECRET_KEY'] = 'a_very_secret_key_that_should_be_changed' # 測試用
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///../instance/database.db' # SQLite 資料庫路徑
+#app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db' #符合Railway寫法
+
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////data/database.db'
+
+# app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///../instance/database.db' # SQLite 資料庫路徑
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False # 關閉不必要的追蹤功能以節省資源
 app.config['UPLOAD_FOLDER'] = 'uploads' # 上傳檔案的資料夾
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True) # 確保上傳資料夾存在
@@ -1152,21 +1156,40 @@ def admin_cancel_registration(registration_id):
 
 
 # --- 主程式進入點 & 初始化 ---
+# --- 主程式進入點 & 初始化 ---
 if __name__ == '__main__':
     with app.app_context():
-        db.create_all() # 建立所有資料表
-        # 檢查是否已有 admin 使用者，若無則建立一個
+        db.create_all()
         if not User.query.filter_by(username='admin').first():
             print("建立預設管理者帳號...")
             admin_user = User(username='admin', is_admin=True)
-            admin_user.set_password('Futsu_Admin') # 預設密碼
+            admin_user.set_password('Futsu_Admin')
             db.session.add(admin_user)
             db.session.commit()
             print("管理者帳號: admin, 密碼: Futsu_Admin")
 
-        # 在啟動前手動執行一次狀態檢查
         print("[Startup] 正在執行首次課程狀態檢查...")
         check_course_status()
         print("[Startup] 首次檢查完成。")
 
-    app.run(debug=True) # debug=True 會在程式碼變動時自動重啟
+    # 改成這樣，不要啟用 debug
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
+# if __name__ == '__main__':
+#     with app.app_context():
+#         db.create_all() # 建立所有資料表
+#         # 檢查是否已有 admin 使用者，若無則建立一個
+#         if not User.query.filter_by(username='admin').first():
+#             print("建立預設管理者帳號...")
+#             admin_user = User(username='admin', is_admin=True)
+#             admin_user.set_password('Futsu_Admin') # 預設密碼
+#             db.session.add(admin_user)
+#             db.session.commit()
+#             print("管理者帳號: admin, 密碼: Futsu_Admin")
+
+#         # 在啟動前手動執行一次狀態檢查
+#         print("[Startup] 正在執行首次課程狀態檢查...")
+#         check_course_status()
+#         print("[Startup] 首次檢查完成。")
+
+#     app.run(debug=True) # debug=True 會在程式碼變動時自動重啟
