@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>登入/註冊</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <!-- 假設 style.css 位於 /static/css/style.css -->
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<!-- START: Firebase SDKs (v8 compat version) -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+<!-- END: Firebase SDKs -->
+
+<!-- 您的主要 JavaScript 檔案 (務必放在 Firebase SDK 之後) -->
+<script src="/js/main.js"></script>
+<body class="login-page-background">
+    <nav class="navbar navbar-expand-lg navbar-light navbar-transparent">
+        <div class="container">
+            <a class="navbar-brand" href="index.html">課程報名系統</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto" id="nav-user-section">
+                    <li class="nav-item">
+                        <a class="nav-link" href="index.html">所有課程</a>
+                    </li>
+                    <!-- 範例：未登入狀態 -->
+                    <li class="nav-item">
+                        <a class="nav-link active" aria-current="page" href="login.html">登入/註冊</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container mt-4">
+        <div class="row justify-content-center align-items-center" style="min-height: 85vh;">
+            <div class="col-11 col-sm-10 col-md-8 col-lg-6 col-xl-5">
+                
+                <div class="card shadow-lg rounded-4">
+                    <div class="card-header bg-transparent border-bottom-0">
+                        <ul class="nav nav-tabs card-header-tabs" id="myTab" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="login-tab" data-bs-toggle="tab" data-bs-target="#login-pane" type="button" role="tab" aria-controls="login-pane" aria-selected="true">登入</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="register-tab" data-bs-toggle="tab" data-bs-target="#register-pane" type="button" role="tab" aria-controls="register-pane" aria-selected="false">註冊</button>
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="card-body p-4 p-md-5">
+                        <div class="tab-content" id="myTabContent">
+                            
+                        <div class="tab-pane fade show active" id="login-pane" role="tabpanel" aria-labelledby="login-tab">
+                            <form id="login-form" method="POST" action="#">
+                                <div class="form-floating mb-3">
+                                    <input type="email" class="form-control" id="login-email" name="email" required placeholder="Email">
+                                    <label for="login-email">Email</label>
+                                </div>
+                                <div class="form-floating mb-3">
+                                    <input type="password" class="form-control" id="login-password" name="password" required placeholder="密碼">
+                                    <label for="login-password">密碼</label>
+                                </div>
+                                <button type="submit" class="btn btn-primary w-100 btn-lg">登入</button>
+                            </form>
+                        </div>
+
+                            <div class="tab-pane fade" id="register-pane" role="tabpanel" aria-labelledby="register-tab">
+                                <h5 class="card-title text-center mb-4">建立新帳號</h5>
+                                <form id="register-form" method="POST" action="#">
+                                    <div class="form-floating mb-3">
+                                        <input type="email" class="form-control" id="register-email" name="email" required placeholder="設定 Email">
+                                        <label for="register-email">設定 Email</label>
+                                    </div>
+                                    <div class="form-floating mb-3">
+                                        <input type="password" class="form-control" id="register-password" name="password" required placeholder="設定密碼">
+                                        <label for="register-password">設定密碼</label>
+                                    </div>
+                                    <button type="submit" class="btn btn-success w-100 btn-lg">註冊</button>
+                                </form>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+</body>
+</html>

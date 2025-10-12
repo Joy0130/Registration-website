@@ -61,7 +61,7 @@
 body.login-page-background {
     /* 2. 設定背景圖片 */
     /* 從專案的本地路徑讀取圖片 */
-    background-image: url('/static/images/login-bg.jpg');
+    background-image: url('/images/login-bg.jpg');
 
     /* 3. 確保背景圖片填滿整個畫面 */
     background-size: cover; /* 縮放圖片以完全覆蓋背景區域 */
@@ -73,7 +73,7 @@ body.login-page-background {
 /* ---- 所有課程頁面背景 ---- */
 body.all-courses-background {
     /* 從專案的本地路徑讀取圖片 */
-    background-image: url('/static/images/allcourses-bg.jpg');
+    background-image: url('/images/allcourses-bg.jpg');
 
     /* 確保背景圖片填滿整個畫面 */
     background-size: cover; /* 縮放圖片以完全覆蓋背景區域 */

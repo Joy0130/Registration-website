@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>新增課程</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <!-- 假設 style.css 位於 /static/css/style.css -->
+    <link rel="stylesheet" href="../static/css/style.css">
+</head>
+<!-- START: Firebase SDKs (v8 compat version) -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+<!-- END: Firebase SDKs -->
+
+<!-- 您的主要 JavaScript 檔案 (務必放在 Firebase SDK 之後) -->
+<script src="/js/main.js"></script>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="index.html">課程報名系統</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto" id="nav-user-section">
+                    <li class="nav-item">
+                        <a class="nav-link" href="index.html">所有課程</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="my_courses.html">我報名的課</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" aria-current="page" href="admin_dashboard.html">後台管理</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#">你好, Joy</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#">登出</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container mt-4">
+        <h2>新增課程</h2>
+        <form action="#" method="POST" enctype="multipart/form-data">
+            <div class="mb-3">
+                <label for="name" class="form-label">課程名稱</label>
+                <input type="text" class="form-control" id="name" name="name" value="" required>
+            </div>
+            <div class="mb-3">
+                <label for="description" class="form-label">課程詳細內容</label>
+                <textarea class="form-control" id="description" name="description" rows="5" required></textarea>
+            </div>
+            <div class="mb-3">
+                <label for="speaker_info" class="form-label">講者資訊</label>
+                <input type="text" class="form-control" id="speaker_info" name="speaker_info" value="">
+            </div>
+
+            <div class="mb-3">
+                <label for="duration_hours" class="form-label">上課時數</label>
+                <input type="number" class="form-control" id="duration_hours" name="duration_hours" value="1" required min="0.5" step="0.5">
+                <div class="form-text">當允許使用者自選時間時，此時數將用於計算課程結束時間。</div>
+            </div>  
+
+            <div class="mb-3">
+                <label for="registration_start_time" class="form-label">開放報名時間</label>
+                <input type="datetime-local" class="form-control" id="registration_start_time" name="registration_start_time" value="" required>
+            </div>
+
+            <div class="mb-3">
+                <label for="registration_end_time" class="form-label">截止報名時間</label>
+                <input type="datetime-local" class="form-control" id="registration_end_time" name="registration_end_time" value="" required>
+            </div>
+
+            <!-- 允許使用者自選時間的區塊 -->
+            <div class="mb-3 p-3 border rounded bg-light">
+                <div class="form-check mb-2">
+                    <input type="checkbox" class="form-check-input" id="allow_user_to_choose_time" name="allow_user_to_choose_time" value="true">
+                    <label class="form-check-label" for="allow_user_to_choose_time">允許使用者選擇上課時間</label>
+                </div>
+                <div id="user-choice-range-section" style="display: none;">
+                    <label class="form-label small">設定使用者可選擇的時間範圍：</label>
+                    <div class="row">
+                        <div class="col-md-3"><input type="date" class="form-control form-control-sm" name="user_choice_start_date" title="可選開始日期" value=""></div>
+                        <div class="col-md-3"><input type="date" class="form-control form-control-sm" name="user_choice_end_date" title="可選結束日期" value=""></div>
+                        <div class="col-md-3"><input type="time" class="form-control form-control-sm" name="user_choice_start_time_of_day" title="每日可選開始時間" value=""></div>
+                        <div class="col-md-3"><input type="time" class="form-control form-control-sm" name="user_choice_end_time_of_day" title="每日可選結束時間" value=""></div>
+                        <div class="col-12">
+                            <div class="form-text">
+                                <small>依序為：可選開始日期、可選結束日期、每日可選開始時間、每日可選結束時間</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-3" id="time-slots-section" style="display: none;">
+                <label class="form-label">設定上課梯次</label>
+                
+                <div id="time-slots-container">
+                    <!-- 範例：新增模式下預設一個梯次 -->
+                    <div class="row g-2 mb-2 time-slot-row align-items-center">
+                        <div class="col-md-4"><input type="datetime-local" class="form-control" name="slot_start_times" required></div>
+                        <div class="col-md-4"><input type="datetime-local" class="form-control" name="slot_end_times" required></div>
+                        <div class="col-md-2"><input type="number" class="form-control" name="slot_capacities" placeholder="人數" value="30" required min="1"></div>
+                    </div>
+                </div>
+                <button type="button" id="add-slot-btn" class="btn btn-success mt-2">新增梯次</button>
+            </div>
+
+            <div id="time-slot-template" style="display: none;">
+                <div class="row g-2 mb-2 time-slot-row align-items-center">
+                    <div class="col-md-4">
+                        <input type="datetime-local" class="form-control" name="slot_start_times" required disabled>
+                    </div>
+                    <div class="col-md-4">
+                        <input type="datetime-local" class="form-control" name="slot_end_times" required disabled>
+                    </div>
+                    <div class="col-md-2">
+                        <input type="number" class="form-control" name="slot_capacities" placeholder="人數" value="30" required min="1" disabled>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-center">
+                        <button type="button" class="btn btn-sm btn-outline-danger remove-slot-btn" title="移除此梯次" disabled>
+                            <i class="bi bi-trash-fill"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="file" class="form-label">上傳課程資料 (可多選)</label>
+                <input class="form-control" type="file" id="file" name="files" multiple> 
+                <div id="file-list-container" class="mt-2"></div>
+
+                <!-- 範例：編輯模式下顯示已上傳檔案 -->
+                <!--
+                <div class="form-text mb-2">目前已上傳檔案:</div>
+                <ul class="list-group" id="existing-files-list">
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <a href="#" target="_blank">課程簡報.pdf</a>
+                        <button type="button" class="btn btn-sm btn-outline-danger" title="刪除此檔案">
+                            <i class="bi bi-trash-fill"></i>
+                        </button>
+                    </li>
+                </ul>
+                -->
+            </div>
+            <a href="admin_dashboard.html" class="btn btn-secondary">取消</a>
+            <button type="submit" class="btn btn-primary">建立課程</button>
+        </form>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
