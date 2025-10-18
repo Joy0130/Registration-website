@@ -1,7 +1,7 @@
 import os
 import uuid
 import io
-from datetime import datetime, timedelta, time, timezone
+from datetime import datetime, timedelta, time
 from flask import Flask, render_template, request, redirect, url_for, jsonify, flash, send_from_directory, abort, send_file
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
@@ -73,7 +73,8 @@ class Registration(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     time_slot_id = db.Column(db.Integer, db.ForeignKey('time_slot.id'), nullable=False) # 報名的梯次
-    registration_time = db.Column(db.DateTime, default=datetime.utc) # 儲存的是 UTC 時間
+    registration_time = db.Column(db.DateTime, default=datetime.utcnow)
+
     __table_args__ = {'extend_existing': True}
 
     # --- 關聯 (Relationships) ---
