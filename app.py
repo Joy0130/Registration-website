@@ -73,7 +73,7 @@ class Registration(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     time_slot_id = db.Column(db.Integer, db.ForeignKey('time_slot.id'), nullable=False) # 報名的梯次
-    registration_time = db.Column(db.DateTime, default=datetime.utcnow) # 儲存的是 UTC 時間
+    registration_time = db.Column(db.DateTime, default=datetime.utc) # 儲存的是 UTC 時間
     __table_args__ = {'extend_existing': True}
 
     # --- 關聯 (Relationships) ---
@@ -117,7 +117,7 @@ def load_user(user_id): # 透過 user_id 載入使用者
 def check_course_status():
     with app.app_context():
         print(" [Scheduler] 正在檢查課程狀態...")
-        now = datetime.utcnow() # 改為使用 UTC 時間
+        now = datetime.now() # 伺服器已是 GMT+8，改回使用本地時間
 
         # 檢查任務一：檢查哪些課程應該從「尚未開放」變為「報名中」
         courses_to_open = Course.query.filter(Course.status == '尚未開放', Course.registration_start_time <= now).all()
@@ -496,7 +496,7 @@ def get_courses():
     courses = query.all()
 
     # --- 計算每門課程的排序用時間戳 ---
-    now = datetime.utcnow() # 改為使用 UTC 時間
+    now = datetime.now() # 伺服器已是 GMT+8，改回使用本地時間
     for c in courses:
         c.sort_timestamp = datetime.max # 預設一個很大的時間，讓沒有時間的課程排在最後
         if c.time_slots:
@@ -580,7 +580,7 @@ def get_my_courses():
     """
     status_filter = request.args.get('status')
     # --- 修正：使用本地時間 (now) 來進行比較，以匹配資料庫中儲存的本地時間 ---
-    now = datetime.utcnow() # 改為使用 UTC 時間
+    now = datetime.now() # 伺服器已是 GMT+8，改回使用本地時間
 
     # 1. 建立基礎查詢，找出這位使用者所有的報名紀錄
     query = Registration.query.filter_by(user_id=current_user.id).join(TimeSlot)
@@ -825,7 +825,7 @@ def _check_time_conflict(user, new_slot_start, new_slot_end, course_id_for_self_
 def _validate_registration(course, user):
     """報名前的統一驗證輔助函式"""
     # 檢查課程是否仍在報名期間
-    if course.status != '報名中' or datetime.utcnow() >= course.registration_end_time: # 改為使用 UTC 時間
+    if course.status != '報名中' or datetime.now() >= course.registration_end_time: # 伺服器已是 GMT+8，改回使用本地時間
         if course.status == '報名中':
             course.status = '報名截止'
             db.session.commit()
@@ -837,8 +837,7 @@ def _validate_registration(course, user):
         TimeSlot.course_id == course.id
     ).first()
     if existing_reg:
-        raise ValueError('您已經報名過此課程。')  
-    
+        return '您已經報名過此課程。'
     return None # 如果所有驗證都通過，返回 None
 
 # [DELETE] 使用者取消報名
@@ -852,7 +851,7 @@ def cancel_registration(registration_id):
 
     slot = reg.time_slot
     # 2. 檢查是否在可取消的期限內 (課程開始前 2 天)
-    if datetime.utcnow() > (slot.slot_start_time - timedelta(days=2)):
+    if datetime.utc() > (slot.slot_start_time - timedelta(days=2)):
         return jsonify({'success': False, 'message': '已超過取消期限，無法取消報名'}), 400
 
     # 3. 執行取消邏輯
