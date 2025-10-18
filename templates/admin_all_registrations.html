@@ -32,6 +32,16 @@
                     <option value="{{ course.id }}" {% if request.args.get('course_id') | string == course.id | string %}selected{% endif %}>
                         {{ course.name }}
                     </option>
+                {# 
+                   1. 使用 unique(attribute='id') 根據課程 ID 移除重複的課程。
+                   2. 使用 if course and course.name 判斷式，確保課程物件存在且有名稱，過濾掉無效資料。
+                #}
+                {% for course in all_courses | unique(attribute='id') %}
+                    {% if course and course.name %}
+                        <option value="{{ course.id }}" {% if request.args.get('course_id') | string == course.id | string %}selected{% endif %}>
+                            {{ course.name }}
+                        </option>
+                    {% endif %}
                 {% endfor %}
             </select>
         </div>

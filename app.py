@@ -1,7 +1,7 @@
 import os
 import uuid
 import io
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
 from flask import Flask, render_template, request, redirect, url_for, jsonify, flash, send_from_directory, abort, send_file
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
@@ -117,7 +117,7 @@ def load_user(user_id): # 透過 user_id 載入使用者
 def check_course_status():
     with app.app_context():
         print(" [Scheduler] 正在檢查課程狀態...")
-        now = datetime.now()
+        now = datetime.utcnow() # 改為使用 UTC 時間
 
         # 檢查任務一：檢查哪些課程應該從「尚未開放」變為「報名中」
         courses_to_open = Course.query.filter(Course.status == '尚未開放', Course.registration_start_time <= now).all()
@@ -344,11 +344,14 @@ def all_registrations():
         except ValueError:
             flash('報名日期格式不正確', 'warning')
     
-    # 取得所有課程列表，用於填充下拉選單
-    all_courses = Course.query.order_by(Course.name).all()
+    # 取得所有有報名紀錄的課程列表，用於填充下拉選單
+    all_courses = db.session.query(Course).join(TimeSlot).join(Registration).distinct(Course.id).order_by(Course.name).all()
     
     # 執行最終查詢並排序
     all_regs = query.order_by(Registration.id.desc()).all()
+    
+    # Debug: Print the course names to console
+    print("Debug: all_courses names:", [course.name for course in all_courses])
     
     # 將 request 和 all_courses 物件傳給模板
     return render_template(
@@ -493,7 +496,7 @@ def get_courses():
     courses = query.all()
 
     # --- 計算每門課程的排序用時間戳 ---
-    now = datetime.now()
+    now = datetime.utcnow() # 改為使用 UTC 時間
     for c in courses:
         c.sort_timestamp = datetime.max # 預設一個很大的時間，讓沒有時間的課程排在最後
         if c.time_slots:
@@ -577,7 +580,7 @@ def get_my_courses():
     """
     status_filter = request.args.get('status')
     # --- 修正：使用本地時間 (now) 來進行比較，以匹配資料庫中儲存的本地時間 ---
-    now = datetime.now()
+    now = datetime.utcnow() # 改為使用 UTC 時間
 
     # 1. 建立基礎查詢，找出這位使用者所有的報名紀錄
     query = Registration.query.filter_by(user_id=current_user.id).join(TimeSlot)
@@ -822,7 +825,7 @@ def _check_time_conflict(user, new_slot_start, new_slot_end, course_id_for_self_
 def _validate_registration(course, user):
     """報名前的統一驗證輔助函式"""
     # 檢查課程是否仍在報名期間
-    if course.status != '報名中' or datetime.now() >= course.registration_end_time:
+    if course.status != '報名中' or datetime.utcnow() >= course.registration_end_time: # 改為使用 UTC 時間
         if course.status == '報名中':
             course.status = '報名截止'
             db.session.commit()
@@ -886,7 +889,6 @@ def create_course():
     try:
         start_time = datetime.strptime(data['registration_start_time'], '%Y-%m-%dT%H:%M')
         end_time = datetime.strptime(data['registration_end_time'], '%Y-%m-%dT%H:%M')
-        now = datetime.now()
 
         # --- 處理自選時間的邏輯 ---
         allow_user_choice = 'allow_user_to_choose_time' in data
@@ -894,20 +896,13 @@ def create_course():
         user_choice_end_date = datetime.strptime(data['user_choice_end_date'], '%Y-%m-%d').date() if allow_user_choice and data.get('user_choice_end_date') else None
         user_choice_start_time_of_day = datetime.strptime(data['user_choice_start_time_of_day'], '%H:%M').time() if allow_user_choice and data.get('user_choice_start_time_of_day') else None
         user_choice_end_time_of_day = datetime.strptime(data['user_choice_end_time_of_day'], '%H:%M').time() if allow_user_choice and data.get('user_choice_end_time_of_day') else None
-
-        if now < start_time:
-            calculated_status = '尚未開放'
-        elif start_time <= now < end_time:
-            calculated_status = '報名中'
-        else:
-            calculated_status = '報名截止'
             
         new_course = Course(
             name=data['name'],
             description=data['description'],
             speaker_info=data['speaker_info'],
             duration_hours=float(data.get('duration_hours', 1)),
-            status=calculated_status,
+            status='尚未開放', # 統一由排程任務更新狀態
             registration_start_time=start_time,
             registration_end_time=end_time,
             has_time_slots=not allow_user_choice,
@@ -946,7 +941,6 @@ def update_course(course_id):
     try:
         start_time = datetime.strptime(data['registration_start_time'], '%Y-%m-%dT%H:%M')
         end_time = datetime.strptime(data['registration_end_time'], '%Y-%m-%dT%H:%M')
-        now = datetime.now()
 
         # --- 處理自選時間的邏輯 ---
         allow_user_choice = 'allow_user_to_choose_time' in data
@@ -955,19 +949,12 @@ def update_course(course_id):
         user_choice_start_time_of_day = datetime.strptime(data['user_choice_start_time_of_day'], '%H:%M').time() if allow_user_choice and data.get('user_choice_start_time_of_day') else None
         user_choice_end_time_of_day = datetime.strptime(data['user_choice_end_time_of_day'], '%H:%M').time() if allow_user_choice and data.get('user_choice_end_time_of_day') else None
 
-        if now < start_time:
-            calculated_status = '尚未開放'
-        elif start_time <= now < end_time:
-            calculated_status = '報名中'
-        else:
-            calculated_status = '報名截止'
-
         # 更新課程基本資料
         course.name = data['name']
         course.description = data['description']
         course.speaker_info = data['speaker_info']
         course.duration_hours = float(data.get('duration_hours', 1))
-        course.status = calculated_status
+        course.status = '尚未開放' # 統一由排程任務更新狀態
         course.registration_start_time = start_time
         course.registration_end_time = end_time
         course.has_time_slots = not allow_user_choice
@@ -1173,7 +1160,7 @@ if __name__ == '__main__':
         print("[Startup] 首次檢查完成。")
 
     # 改成這樣，不要啟用 debug
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5003)))
 
 # if __name__ == '__main__':
 #     with app.app_context():

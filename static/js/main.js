@@ -668,31 +668,6 @@ if (adminCourseListPage) {
         }
     });
 
-    // ---- START: 修正所有報名紀錄頁面的課程下拉選單重複問題 ----
-    const courseSelect = document.getElementById('course_id');
-    if (courseSelect) {
-        // 收集所有選項
-        const options = Array.from(courseSelect.options);
-        const seenCourseIds = new Set();
-        const uniqueOptions = [];
-
-        options.forEach(option => {
-            const courseId = option.value;
-            // 保留空值選項（"所有課程"）或未見過的課程 ID
-            if (courseId === '' || !seenCourseIds.has(courseId)) {
-                seenCourseIds.add(courseId);
-                uniqueOptions.push(option);
-            }
-        });
-
-        // 清空下拉選單
-        courseSelect.innerHTML = '';
-        // 重新加入去重後的選項
-        uniqueOptions.forEach(option => {
-            courseSelect.appendChild(option);
-        });
-    }
-    // ---- END: 修正所有報名紀錄頁面的課程下拉選單重複問題 ----
 });
 
 // --- 全域可呼叫的函式 (因為 onclick 屬性需要它們在全域範疇) ---
