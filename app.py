@@ -6,16 +6,27 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, f
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from flask_mail import Mail, Message
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from apscheduler.schedulers.background import BackgroundScheduler
 from openpyxl.styles import Font
 import openpyxl
+import secrets
+import string
+from dotenv import load_dotenv
+
+# 載入環境變數
+load_dotenv()
 # --- App 組態設定 ---
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or 'a_default_secret_key'  # 可從環境變數取得，若無則使用預設值 (開發時可用)
 #app.config['SECRET_KEY'] = 'a_very_secret_key_that_should_be_changed' # 測試用
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db' #符合Railway寫法
+
+# 使用絕對路徑確保資料庫能正確存取
+import os
+basedir = os.path.abspath(os.path.dirname(__file__))
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(basedir, "instance", "database.db")}'
 
 #app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////data/database.db'
 
@@ -24,7 +35,16 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False # 關閉不必要的追蹤�
 app.config['UPLOAD_FOLDER'] = 'uploads' # 上傳檔案的資料夾
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True) # 確保上傳資料夾存在
 
+# Mail configuration
+app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER') or 'smtp.gmail.com'
+app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT') or 587)
+app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'true').lower() in ['true', 'on', '1']
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER') or app.config['MAIL_USERNAME']
+
 db = SQLAlchemy(app)
+mail = Mail(app)
 login_manager = LoginManager(app) # App 初始化登入管理
 login_manager.login_view = 'login' # 如果使用者未登入就嘗試訪問受保護頁面，會被導向到登入頁
 login_manager.login_message = "請先登入。"
@@ -33,8 +53,10 @@ login_manager.login_message = "請先登入。"
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True) # 使用者ID 唯一值
     username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False) # 電子郵件地址
     password_hash = db.Column(db.String(200), nullable=False) # 儲存雜湊後的密碼
     is_admin = db.Column(db.Boolean, default=False) # 是否為管理者
+    needs_password_change = db.Column(db.Boolean, default=False) # 是否需要更新密碼
     __table_args__ = {'extend_existing': True} # 避免重複定義表格錯誤
     # 密碼相關方法
     def set_password(self, password):
@@ -249,6 +271,12 @@ def login():
         if user and user.check_password(password):
             login_user(user, remember=True)
             flash('登入成功！', 'success')
+            
+            # 檢查是否需要更新密碼
+            if user.needs_password_change:
+                flash('為了您的帳戶安全，請先更新您的密碼。', 'warning')
+                return redirect(url_for('change_password'))
+            
             next_page = request.args.get('next')
             return redirect(next_page or url_for('index'))
         else:
@@ -261,13 +289,18 @@ def register():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
     username = request.form['username']
+    email = request.form['email']
     password = request.form['password']
     
     if User.query.filter_by(username=username).first():
         flash('這個帳號已經被註冊了。', 'warning')
         return redirect(url_for('login'))
+    
+    if User.query.filter_by(email=email).first():
+        flash('這個電子郵件已經被註冊了。', 'warning')
+        return redirect(url_for('login'))
 
-    new_user = User(username=username)
+    new_user = User(username=username, email=email)
     new_user.set_password(password)
     db.session.add(new_user)
     db.session.commit()
@@ -281,6 +314,171 @@ def logout():
     logout_user()
     flash('您已成功登出。', 'info')
     return redirect(url_for('index'))
+
+# 生成隨機密碼的輔助函數
+def generate_random_password(length=8):
+    """生成指定長度的隨機密碼"""
+    characters = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(characters) for _ in range(length))
+
+# 發送重設密碼郵件的輔助函數
+def send_reset_password_email(user_email, username, new_password):
+    """發送包含新密碼的重設密碼郵件"""
+    try:
+        # 檢查郵件配置是否完整
+        if not app.config.get('MAIL_USERNAME') or not app.config.get('MAIL_PASSWORD'):
+            print("錯誤：郵件配置不完整 - MAIL_USERNAME 或 MAIL_PASSWORD 未設定")
+            return False
+            
+        if not app.config.get('MAIL_SERVER'):
+            print("錯誤：MAIL_SERVER 未設定")
+            return False
+            
+        msg = Message(
+            '密碼重設通知 - 課程報名系統',
+            recipients=[user_email],
+            sender=app.config.get('MAIL_DEFAULT_SENDER') or app.config.get('MAIL_USERNAME')
+        )
+        
+        msg.body = f'''親愛的 {username}，
+
+您好！您已成功申請重設密碼。
+
+新的臨時密碼是：{new_password}
+
+請使用此臨時密碼登入系統，登入後系統將強制要求您更新密碼。
+為了您的帳戶安全，請盡快更新您的密碼。
+
+如果您沒有申請重設密碼，請忽略此郵件或聯繫系統管理員。
+
+此郵件由系統自動發送，請勿回覆。
+
+課程報名系統
+{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+'''
+
+        msg.html = f'''
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #333;">密碼重設通知</h2>
+            <p>親愛的 <strong>{username}</strong>，</p>
+            <p>您好！您已成功申請重設密碼。</p>
+            
+            <div style="background-color: #f8f9fa; padding: 20px; border-left: 4px solid #007bff; margin: 20px 0;">
+                <h3 style="margin-top: 0; color: #007bff;">新的臨時密碼</h3>
+                <p style="font-size: 18px; font-weight: bold; color: #dc3545; font-family: monospace;">{new_password}</p>
+            </div>
+            
+            <p><strong>請注意：</strong></p>
+            <ul>
+                <li>請使用此臨時密碼登入系統</li>
+                <li>登入後系統將強制要求您更新密碼</li>
+                <li>為了您的帳戶安全，請盡快更新您的密碼</li>
+            </ul>
+            
+            <p style="color: #666; font-size: 14px;">
+                如果您沒有申請重設密碼，請忽略此郵件或聯繫系統管理員。<br>
+                此郵件由系統自動發送，請勿回覆。
+            </p>
+            
+            <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+            <p style="color: #999; font-size: 12px;">
+                課程報名系統<br>
+                {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            </p>
+        </div>
+        '''
+        
+        print(f"嘗試發送密碼重設郵件到：{user_email}")
+        mail.send(msg)
+        print(f"密碼重設郵件已成功發送至：{user_email}")
+        return True
+        
+    except Exception as e:
+        print(f"發送郵件錯誤 - 錯誤類型：{type(e).__name__}")
+        print(f"發送郵件錯誤 - 詳細訊息：{e}")
+        print(f"發送郵件錯誤 - 收件人：{user_email}")
+        import traceback
+        print(f"詳細錯誤追蹤：{traceback.format_exc()}")
+        return False
+
+# 忘記密碼頁面
+@app.route('/forgot_password', methods=['GET', 'POST'])
+def forgot_password():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    
+    if request.method == 'POST':
+        email = request.form['email'].strip().lower()  # 去除空白並轉小寫
+        
+        if not email:
+            flash('請輸入電子郵件地址。', 'warning')
+            return render_template('forgot_password.html')
+        
+        print(f"忘記密碼請求 - 查詢的email：{email}")
+        user = User.query.filter_by(email=email).first()
+        
+        if user:
+            try:
+                print(f"找到用戶：{user.username}，email：{user.email}")
+                
+                # 生成新的隨機密碼
+                new_password = generate_random_password()
+                user.set_password(new_password)
+                user.needs_password_change = True  # 標記需要更新密碼
+                db.session.commit()
+                print(f"密碼已更新，新密碼：{new_password}")
+                
+                # 發送重設密碼郵件
+                if send_reset_password_email(user.email, user.username, new_password):
+                    flash('新密碼已發送到您的電子郵件，請檢查您的信箱（包括垃圾郵件夾）。', 'success')
+                    return redirect(url_for('login'))
+                else:
+                    # 如果郵件發送失敗，回滾密碼變更
+                    db.session.rollback()
+                    flash('發送郵件時發生錯誤，請檢查郵件配置或稍後再試。', 'danger')
+                    
+            except Exception as e:
+                db.session.rollback()
+                print(f"密碼重設過程發生錯誤: {e}")
+                flash('系統發生錯誤，請稍後再試。', 'danger')
+        else:
+            print(f"未找到email對應的帳號：{email}")
+            # 為了安全起見，不論是否找到帳號都顯示相同訊息
+            flash('如果該電子郵件地址已註冊，系統將發送新密碼到您的信箱。', 'info')
+            return redirect(url_for('login'))
+        
+        return redirect(url_for('login'))
+    
+    return render_template('forgot_password.html')
+
+# 變更密碼頁面
+@app.route('/change_password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    if request.method == 'POST':
+        current_password = request.form['current_password']
+        new_password = request.form['new_password']
+        confirm_password = request.form['confirm_password']
+        
+        # 驗證當前密碼
+        if not current_user.check_password(current_password):
+            flash('當前密碼不正確。', 'danger')
+            return render_template('change_password.html')
+        
+        # 驗證新密碼確認
+        if new_password != confirm_password:
+            flash('新密碼與確認密碼不一致。', 'danger')
+            return render_template('change_password.html')
+        
+        # 更新密碼
+        current_user.set_password(new_password)
+        current_user.needs_password_change = False  # 重設標記
+        db.session.commit()
+        
+        flash('密碼更新成功！', 'success')
+        return redirect(url_for('index'))
+    
+    return render_template('change_password.html')
 
 # --- 後台管理頁面路由 ---
 @app.route('/admin')
@@ -556,7 +754,7 @@ def get_courses():
             ).first()
             is_registered = user_reg is not None
         
-        class_time_summary = "尚未設定"
+        class_time_summary = "自行選擇上課時間"
         if c.time_slots:
             earliest_start_time = min(slot.slot_start_time for slot in c.time_slots)
             latest_end_time = max(slot.slot_end_time for slot in c.time_slots)
@@ -859,6 +1057,10 @@ def _check_time_conflict(user, new_slot_start, new_slot_end, course_id_for_self_
 
 def _validate_registration(course, user):
     """報名前的統一驗證輔助函式"""
+    # 檢查使用者是否需要更新密碼
+    if user.needs_password_change:
+        return '為了您的帳戶安全，請先更新密碼後再進行課程報名。'
+    
     # 檢查課程是否仍在報名期間
     if course.status != '報名中' or datetime.now() >= course.registration_end_time: # 伺服器已是 GMT+8，改回使用本地時間
         if course.status == '報名中':
@@ -1183,18 +1385,23 @@ if __name__ == '__main__':
         db.create_all()
         if not User.query.filter_by(username='admin').first():
             print("建立預設管理者帳號...")
-            admin_user = User(username='admin', is_admin=True)
-            admin_user.set_password('Futsu_Admin')
+            admin_user = User(
+                username='admin', 
+                email='misfutsu@gmail.com',
+                is_admin=True,
+                needs_password_change=False
+            )
+            admin_user.set_password('admin123')
             db.session.add(admin_user)
             db.session.commit()
-            print("管理者帳號: admin, 密碼: Futsu_Admin")
+            print("管理者帳號: admin, 密碼: admin123, email: misfutsu@gmail.com")
 
         print("[Startup] 正在執行首次課程狀態檢查...")
         check_course_status()
         print("[Startup] 首次檢查完成。")
 
-    # 改成這樣，不要啟用 debug
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5003)))
+    # 改成這樣，啟用 debug 模式以自動重新載入模板變更
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5003)), debug=True)
 
 # if __name__ == '__main__':
 #     with app.app_context():

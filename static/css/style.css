@@ -98,6 +98,13 @@ body.all-courses-background {
 }
 
 /* 選取透明導覽列中的「品牌名稱」和「導覽連結」 */
+
+/* --- 登入卡片懸停效果 --- */
+/* 當滑鼠移入卡片時，忘記密碼的文字變成白色 */
+.login-page-background .card:hover .text-muted,
+.login-page-background .card:hover .card-title {
+    color: white !important;
+}
 .navbar-transparent .navbar-brand,
 .navbar-transparent .navbar-nav .nav-link {
     /* 設定文字顏色為帶有些許透明度的白色，看起來更柔和 */
@@ -122,15 +129,15 @@ body.all-courses-background {
 
 /* ---- 卡片效果 ---- */
 
-/* 1. 為卡片本身設定過渡動畫 */
-.card {
+/* 1. 為登入頁面的卡片設定過渡動畫 */
+.login-page-background .card {
     /* 當 transform 和 box-shadow 屬性改變時，在 0.3 秒內平滑地完成動畫 */
     transition: transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
 }
 
-/* 2. 定義滑鼠懸停在卡片上時的樣式 */
-.card:hover {
-    /* 將卡片沿著 Y 軸向上移動 5 像素，產生“浮起來”的感覺 */
+/* 2. 定義滑鼠懸停在登入卡片上時的樣式 */
+.login-page-background .card:hover {
+    /* 將卡片沿著 Y 軸向上移動 5 像素，產生"浮起來"的感覺 */
     transform: translateY(-5px);
 
     /* 同時，給卡片一個更深、更廣的陰影，強化立體感 */
@@ -139,8 +146,8 @@ body.all-courses-background {
 }
 
 /* 3. 當滑鼠懸停在登入卡片上時，讓註冊區塊的標題變為白色 */
-.card:hover #register-pane .card-title {
-    color: #fff !important;
+.login-page-background .card:hover #register-pane .card-title {
+    color: #ffffff !important;
     transition: color 0.3s ease-in-out;
 }
 
@@ -202,5 +209,19 @@ input[readonly], textarea[readonly] {
   background-color: #ae57a4 !important; /* 保持原本紫色背景 */
   border-color: #ae57a4 !important; /* 保持邊框一致 */
   box-shadow: none !important; /* 移除預設陰影 */
+}
+
+/* --- 其他頁面課程卡片hover效果 --- */
+/* 為非登入頁面的卡片添加淡藍色背景hover效果 */
+body:not(.login-page-background) .card:hover {
+    background-color: rgba(204, 231, 250, 0.006); /* 淡藍色背景 */
+    /* transition: background-color 0.3s ease-in-out; */
+    transition: transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+    /* 將卡片沿著 Y 軸向上移動 5 像素，產生"浮起來"的感覺 */
+    transform: translateY(-5px);
+
+    /* 同時，給卡片一個更深、更廣的陰影，強化立體感 */
+    box-shadow: 0 12px 28px rgba(55, 141, 208, 0.2), 0 7px 10px rgba(131, 193, 247, 0.18);
+    background-color:  rgba(98, 158, 205, 0.2); /* 一個帶有透明度的淺灰色 */
 }
 
