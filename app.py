@@ -677,15 +677,15 @@ def download_file(file_id):
     course_file = db.session.get(CourseFile, file_id)
     if not course_file:
         flash('找不到指定的檔案', 'warning')
-        
-    # 在提供下載時才使用 secure_filename
-    safe_display_name = secure_filename(course_file.display_filename)
-
+        return redirect(url_for('index'))
+    
+    # 對於下載，保持原始的顯示檔名，不使用 secure_filename
+    # Flask 的 send_from_directory 會自動處理中文檔名的編碼
     return send_from_directory(
         app.config['UPLOAD_FOLDER'], 
         course_file.file_path, 
         as_attachment=True, 
-        download_name=safe_display_name # 使用淨化後的檔名
+        download_name=course_file.display_filename  # 下載檔案名稱原始檔名
     )
 # ---- END ----
 
