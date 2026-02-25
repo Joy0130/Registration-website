@@ -1282,6 +1282,16 @@ def _handle_file_uploads(files, course_object):
 @admin_required
 def delete_course(course_id): # 刪除課程 函式
     course = Course.query.get_or_404(course_id)
+    
+    # 檢查課程是否有報名記錄
+    registrations_count = db.session.query(Registration).join(TimeSlot).filter(TimeSlot.course_id == course_id).count()
+    
+    if registrations_count > 0:
+        return jsonify({
+            'success': False, 
+            'message': f'無法刪除課程：此課程已有 {registrations_count} 筆報名記錄'
+        }), 400
+    
     db.session.delete(course)
     db.session.commit()
     return jsonify({'success': True, 'message': '課程已刪除'})
@@ -1353,7 +1363,7 @@ def admin_cancel_registration(registration_id):
     reg = db.session.get(Registration, registration_id)
     if not reg:
         flash('找不到指定的報名紀錄。', 'danger')
-        return redirect(url_for('all_registrations', **request.args))
+        return redirect(url_for('all_registrations') + '?' + request.query_string.decode())
 
     try:
         slot = reg.time_slot
@@ -1375,7 +1385,7 @@ def admin_cancel_registration(registration_id):
         db.session.rollback()
         flash(f'處理取消時發生錯誤: {e}', 'danger')
     
-    return redirect(url_for('all_registrations', **request.args))
+    return redirect(url_for('all_registrations') + '?' + request.query_string.decode())
 
 
 # --- 主程式進入點 & 初始化 ---

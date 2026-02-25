@@ -735,16 +735,22 @@ async function registerForCourse(courseId) {
 // 刪除課程 函式
 async function deleteCourse(courseId) {
     if (confirm('確定要刪除這門課程嗎？此操作無法復原。')) {
-        const response = await fetch(`/api/admin/courses/${courseId}`, {
-            method: 'DELETE',
-        });
-        const result = await response.json();
-        if (response.ok && result.success) {
-            alert(result.message);
-            location.reload();
-        } 
-        else {
-            alert(`刪除失敗: ${result.message}`);
+        try {
+            const response = await fetch(`/api/admin/courses/${courseId}`, {
+                method: 'DELETE',
+            });
+            const result = await response.json();
+            
+            if (response.ok && result.success) {
+                alert(result.message);
+                location.reload();
+            } 
+            else {
+                alert(`刪除失敗: ${result.message}`);
+            }
+        } catch (error) {
+            alert('刪除失敗: 網路錯誤或伺服器無回應');
+            console.error('刪除課程錯誤:', error);
         }
     }
 }
