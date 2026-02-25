@@ -117,8 +117,9 @@ def load_user(user_id): # 透過 user_id 載入使用者
 # --- 定時任務 (自動更新課程狀態) ---
 def check_course_status():
     with app.app_context():
-        print(" [Scheduler] 正在檢查課程狀態...")
+        print(f" [Scheduler] 正在檢查課程狀態... ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
         now = datetime.now() # 伺服器已是 GMT+8，改回使用本地時間
+        updated_count = 0
 
         # 檢查任務一：檢查哪些課程應該從「尚未開放」變為「報名中」
         courses_to_open = Course.query.filter(Course.status == '尚未開放', Course.registration_start_time <= now).all()
@@ -126,22 +127,29 @@ def check_course_status():
             # 額外檢查：確保開始時間已到，但結束時間還沒到
             if now < course.registration_end_time:
                 course.status = '報名中'
-                print(f" [Scheduler] 課程 '{course.name}' 已自動開放報名。")
+                print(f" [Scheduler] 課程 '{course.name}' 已自動開放報名。(開始時間: {course.registration_start_time})")
+                updated_count += 1
             else:
                 # 處理一種特殊情況：管理員設定的開始時間和結束時間都已經是過去式
                 course.status = '報名截止'
                 print(f" [Scheduler] 課程 '{course.name}' 已過截止日期，直接設為報名截止。")
+                updated_count += 1
 
         # 檢查任務二：檢查哪些課程應該從「報名中」變為「報名截止」
         courses_to_close = Course.query.filter(Course.status == '報名中', Course.registration_end_time <= now).all()
         for course in courses_to_close:
             course.status = '報名截止'
-            print(f" [Scheduler] 課程 '{course.name}' 已自動截止報名。")
+            print(f" [Scheduler] 課程 '{course.name}' 已自動截止報名。(截止時間: {course.registration_end_time})")
+            updated_count += 1
 
-        db.session.commit()
+        if updated_count > 0:
+            db.session.commit()
+            print(f" [Scheduler] 共更新了 {updated_count} 門課程的狀態。")
+        else:
+            print(" [Scheduler] 沒有需要更新狀態的課程。")
 
 scheduler = BackgroundScheduler(daemon=True) # 在背景中檢查課程狀態
-scheduler.add_job(check_course_status, 'interval', minutes=1) # 每分鐘檢查課成狀態
+scheduler.add_job(check_course_status, 'interval', seconds=30) # 每30秒檢查課程狀態，提高即時性
 scheduler.start()
 
 # --- 輔助函式 (檢查管理者權限) ---
@@ -171,6 +179,9 @@ def my_courses():
 # ---- START: 請用這段完整的程式碼取代舊的 course_detail 函式 ----
 @app.route('/course/<int:course_id>')
 def course_detail(course_id):
+    # 在顯示課程詳情前先檢查狀態
+    check_course_status()
+    
     course = db.session.get(Course, course_id)
     if not course:
         abort(404)
@@ -482,9 +493,29 @@ def download_file(file_id):
 
 # --- API 路由 (供前端 JavaScript 呼叫) ---
 
+# [POST] 手動觸發課程狀態檢查
+@app.route('/api/check_course_status', methods=['POST'])
+def manual_check_course_status():
+    """手動觸發課程狀態檢查，適用於需要即時更新的情況"""
+    try:
+        check_course_status()
+        return jsonify({
+            'success': True,
+            'message': '課程狀態檢查完成',
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'狀態檢查失敗: {str(e)}'
+        }), 500
+
 # [GET] 取得課程列表 (支援搜尋與篩選)
 @app.route('/api/courses', methods=['GET'])
 def get_courses():
+    # 在查詢課程前先執行狀態檢查，確保狀態是最新的
+    check_course_status()
+    
     query = Course.query
     search = request.args.get('search')
     status = request.args.get('status')
@@ -579,6 +610,9 @@ def get_my_courses():
     - '課程進行中'
     - '課程已結束'
     """
+    # 在查詢我的課程前先檢查狀態
+    check_course_status()
+    
     status_filter = request.args.get('status')
     # --- 修正：使用本地時間 (now) 來進行比較，以匹配資料庫中儲存的本地時間 ---
     now = datetime.now() # 伺服器已是 GMT+8，改回使用本地時間

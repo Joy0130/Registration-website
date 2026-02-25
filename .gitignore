@@ -1,2 +1,6 @@
 .venv/
 .vscode/
+COURSE_STATUS.md
+reset_admin.py
+test_course_status.py
+.env
