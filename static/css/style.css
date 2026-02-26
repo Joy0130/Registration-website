@@ -104,6 +104,7 @@ body.all-courses-background {
 .login-page-background .card:hover .text-muted,
 .login-page-background .card:hover .card-title {
     color: white !important;
+    padding-top: 10px;
 }
 .navbar-transparent .navbar-brand,
 .navbar-transparent .navbar-nav .nav-link {
@@ -149,6 +150,7 @@ body.all-courses-background {
 .login-page-background .card:hover #register-pane .card-title {
     color: #ffffff !important;
     transition: color 0.3s ease-in-out;
+    padding-top: 10px;
 }
 
 /* ---- 優化後台管理表格欄位寬度 ---- */
