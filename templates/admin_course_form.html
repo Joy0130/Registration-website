@@ -43,14 +43,15 @@
         <div id="user-choice-range-section" style="display: none;">
             <label class="form-label small">設定使用者可選擇的時間範圍：</label>
             <div class="row">
-                <div class="col-md-3"><input type="date" class="form-control form-control-sm" name="user_choice_start_date" title="可選開始日期" value="{{ (course.user_choice_start_date.strftime('%Y-%m-%d') if course and course.user_choice_start_date) or request.form.get('user_choice_start_date', '') }}"></div>
-                <div class="col-md-3"><input type="date" class="form-control form-control-sm" name="user_choice_end_date" title="可選結束日期" value="{{ (course.user_choice_end_date.strftime('%Y-%m-%d') if course and course.user_choice_end_date) or request.form.get('user_choice_end_date', '') }}"></div>
-                <div class="col-md-3"><input type="time" class="form-control form-control-sm" name="user_choice_start_time_of_day" title="每日可選開始時間" value="{{ (course.user_choice_start_time_of_day.strftime('%H:%M') if course and course.user_choice_start_time_of_day) or request.form.get('user_choice_start_time_of_day', '') }}"></div>
-                <div class="col-md-3"><input type="time" class="form-control form-control-sm" name="user_choice_end_time_of_day" title="每日可選結束時間" value="{{ (course.user_choice_end_time_of_day.strftime('%H:%M') if course and course.user_choice_end_time_of_day) or request.form.get('user_choice_end_time_of_day', '') }}"></div>
+                <div class="form-text" class="col-md-12 mb-2">
+                    <small>依序為：可選開始日期、可選結束日期、每日可選開始時間、每日可選結束時間</small>
+                </div>
+                <div class="col-md-3"><input type="date" class="form-control form-control-sm" name="user_choice_start_date" title="可選開始日期" placeholder="選擇開始日期" onclick="this.showPicker && this.showPicker()"  value="{{ (course.user_choice_start_date.strftime('%Y-%m-%d') if course and course.user_choice_start_date) or request.form.get('user_choice_start_date', '') }}"></div>
+                <div class="col-md-3"><input type="date" class="form-control form-control-sm" name="user_choice_end_date" title="可選結束日期" placeholder="選擇結束日期" onclick="this.showPicker && this.showPicker()" value="{{ (course.user_choice_end_date.strftime('%Y-%m-%d') if course and course.user_choice_end_date) or request.form.get('user_choice_end_date', '') }}"></div>
+                <div class="col-md-3"><input type="time" class="form-control form-control-sm" name="user_choice_start_time_of_day" title="每日可選開始時間" placeholder="選擇開始時間" onclick="this.showPicker && this.showPicker()" value="{{ (course.user_choice_start_time_of_day.strftime('%H:%M') if course and course.user_choice_start_time_of_day) or request.form.get('user_choice_start_time_of_day', '') }}"></div>
+                <div class="col-md-3"><input type="time" class="form-control form-control-sm" name="user_choice_end_time_of_day" title="每日可選結束時間" placeholder="選擇結束時間" onclick="this.showPicker && this.showPicker()" value="{{ (course.user_choice_end_time_of_day.strftime('%H:%M') if course and course.user_choice_end_time_of_day) or request.form.get('user_choice_end_time_of_day', '') }}"></div>
                 <div class="col-12">
-                    <div class="form-text">
-                        <small>依序為：可選開始日期、可選結束日期、每日可選開始時間、每日可選結束時間</small>
-                    </div>
+
                 </div>
             </div>
         </div>
@@ -58,20 +59,25 @@
 
     <div class="mb-3" id="time-slots-section" style="display: none;">
         <label class="form-label">設定上課梯次</label>
-        
+        <div class="col-md-12 mb-2">
+            <div class="form-text">
+                <small>依序為：課程開始時間、課程結束時間、梯次人數上限</small>
+            </div>
+        </div>
         <div id="time-slots-container">
             {% if course and course.time_slots %}
                 {% for slot in course.time_slots %}
                     <div class="row g-2 mb-2 time-slot-row align-items-center">
                         <div class="col-md-4">
-                            <input type="datetime-local" class="form-control" name="slot_start_times" value="{{ slot.slot_start_time.strftime('%Y-%m-%dT%H:%M') }}" required>
+                            <input type="datetime-local" title="此梯次開始日期時間" placeholder="開始日期時間" class="form-control" id="slot_start_times" name="slot_start_times" value="{{ slot.slot_start_time.strftime('%Y-%m-%dT%H:%M') }}" required>
                         </div>
                         <div class="col-md-4">
-                            <input type="datetime-local" class="form-control" name="slot_end_times" value="{{ slot.slot_end_time.strftime('%Y-%m-%dT%H:%M') }}" required>
+                            <input type="datetime-local" title="此梯次結束日期時間" placeholder="結束日期時間" class="form-control" name="slot_end_times" value="{{ slot.slot_end_time.strftime('%Y-%m-%dT%H:%M') }}" required>
                         </div>
                         <div class="col-md-2">
-                            <input type="number" class="form-control" name="slot_capacities" placeholder="人數" value="{{ slot.capacity }}" required min="1">
+                            <input type="number" title="此梯次人數上限" placeholder="人數" class="form-control" name="slot_capacities" value="{{ slot.capacity }}" required min="1">
                         </div>
+                       
                         <div class="col-md-2 d-flex align-items-center">
                             <button type="button" class="btn btn-sm btn-outline-danger remove-slot-btn" title="移除此梯次">
                                 <i class="bi bi-trash-fill"></i>
@@ -131,9 +137,11 @@
             <li id="file-{{ file.id }}" class="list-group-item d-flex justify-content-between align-items-center">
                 <a href="{{ url_for('download_file', file_id=file.id) }}" target="_blank">{{ file.display_filename }}</a>
                 <!-- 按鈕已修改為圖示 -->
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteFile({{ file.id }}, this)" title="刪除此檔案">
-                    <i class="bi bi-trash-fill"></i>
+
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteFile('{{ file.id }}', this)" title="刪除此檔案">
+                  <i class="bi bi-trash-fill"></i>
                 </button>
+
             </li>
         {% endfor %}
         </ul>
