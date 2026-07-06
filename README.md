@@ -143,14 +143,6 @@ MAIL_DEFAULT_SENDER=you@example.com
 
 專案中有 test_course_status.py，建議安裝 pytest 並撰寫更多單元測試來覆蓋課程狀態更新、報名邏輯與時間衝突檢查。
 
-貢獻
-
-歡迎提出 Pull Request、回報 Issue，或直接在 Issues 中討論功能需求與 Bug。提交 PR 時請提供可重現的步驟與相關測試。
-
-授權
-
-請在此處放上授權資訊（例如 MIT、Apache-2.0），若你沒有指定，我可以幫你加一個範例 LICENSE 檔案。
-
 聯絡
 
 若有問題可以在 GitHub Repo 提 issue，或聯絡專案擁有者。
